@@ -1,0 +1,30 @@
+# Minimal R execution environment for ragomics-agent-local
+FROM --platform=linux/arm64 r-base:4.4.3
+
+# Install basic system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libxml2-dev \
+    libhdf5-dev \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages for anndata bridge
+RUN pip3 install --break-system-packages anndata h5py numpy pandas
+
+# Install basic R packages
+RUN R -e "install.packages(c('devtools', 'BiocManager', 'tidyverse', 'ggplot2', 'Seurat'), repos='https://cloud.r-project.org')"
+
+# Install anndata interface
+RUN R -e "install.packages('reticulate', repos='https://cloud.r-project.org')"
+RUN R -e "reticulate::use_python('/usr/bin/python3', required=TRUE)"
+
+# Create directories
+RUN mkdir -p /workspace/input /workspace/output/figures /workspace/tmp
+
+WORKDIR /workspace
+
+CMD ["Rscript", "/workspace/run.R"]
