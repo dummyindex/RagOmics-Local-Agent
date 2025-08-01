@@ -15,8 +15,8 @@ A command-line tool for hierarchical single-cell RNA-seq analysis using LLM-guid
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ragomics-agent-local.git
-cd ragomics-agent-local
+git clone https://github.com/dummyindex/RagOmics-Local-Agent.git
+cd RagOmics-Local-Agent
 
 # Install the package
 pip install -e .
@@ -41,6 +41,23 @@ ragomics-agent analyze data.h5ad "Analyze RNA velocity" \
   --max-nodes 20 \
   --output results/
 ```
+
+## Testing
+
+Run the test suite to verify the installation:
+
+```bash
+# Run scVelo RNA velocity tests
+python tests/scvelo_manual_tests.py
+
+# Run scFates trajectory inference test
+python tests/test_scfates_successful_final.py
+
+# Run agent tests
+python tests/agents/test_main_agent_simple.py
+```
+
+Test outputs will be saved in the `test_outputs/` directory.
 
 ## Project Structure
 
