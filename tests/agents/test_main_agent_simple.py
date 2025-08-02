@@ -335,10 +335,7 @@ def test_simple_scvelo_pipeline():
             input_path = tree_manager.get_latest_data_path(node.id) or current_data_path
             
             # Execute
-            state, result = node_executor.execute_node(
-                node=node,
-                input_data_path=input_path,
-                output_base_dir=output_dir / tree.id
+            state, result = node_executor.execute_node(node=node, tree=tree, input_path=input_path, output_base_dir=output_dir / tree.id
             )
             
             # Update results

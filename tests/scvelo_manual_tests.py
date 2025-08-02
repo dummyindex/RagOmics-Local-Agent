@@ -811,10 +811,7 @@ def test_scvelo_tree_1_steady_state(input_data_path: Path, output_dir: Path):
     # Execute preprocessing
     print("\n1. Executing preprocessing...")
     tree_manager.update_node_execution(preprocessing_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=preprocessing_node,
-        input_data_path=input_data_path,
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=preprocessing_node, tree=tree, input_path=input_data_path, output_base_dir=output_dir / tree.id
     )
     
     if state == NodeState.COMPLETED:
@@ -836,10 +833,7 @@ def test_scvelo_tree_1_steady_state(input_data_path: Path, output_dir: Path):
     # Execute velocity computation
     print("\n2. Computing steady-state velocity...")
     tree_manager.update_node_execution(velocity_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=velocity_node,
-        input_data_path=Path(preprocessing_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=velocity_node, tree=tree, input_path=Path(preprocessing_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state == NodeState.COMPLETED:
@@ -861,10 +855,7 @@ def test_scvelo_tree_1_steady_state(input_data_path: Path, output_dir: Path):
     # Execute analysis
     print("\n3. Performing velocity analysis...")
     tree_manager.update_node_execution(analysis_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=analysis_node,
-        input_data_path=Path(velocity_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=analysis_node, tree=tree, input_path=Path(velocity_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state == NodeState.COMPLETED:
@@ -952,10 +943,7 @@ def test_scvelo_tree_2_model_comparison(input_data_path: Path, output_dir: Path)
     # Execute preprocessing
     print("\n1. Executing preprocessing with custom parameters...")
     tree_manager.update_node_execution(preprocessing_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=preprocessing_node,
-        input_data_path=input_data_path,
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=preprocessing_node, tree=tree, input_path=input_data_path, output_base_dir=output_dir / tree.id
     )
     
     if state != NodeState.COMPLETED:
@@ -978,10 +966,7 @@ def test_scvelo_tree_2_model_comparison(input_data_path: Path, output_dir: Path)
     for i, (node, name) in enumerate(zip(velocity_nodes, ['steady-state', 'stochastic', 'dynamical'])):
         print(f"\n{i+2}. Computing {name} velocity...")
         tree_manager.update_node_execution(node.id, NodeState.RUNNING)
-        state, result = node_executor.execute_node(
-            node=node,
-            input_data_path=Path(preprocessing_node.output_data_id),
-            output_base_dir=output_dir / tree.id
+        state, result = node_executor.execute_node(node=node, tree=tree, input_path=Path(preprocessing_node.output_data_id), output_base_dir=output_dir / tree.id
         )
         
         if state == NodeState.COMPLETED:
@@ -1003,10 +988,7 @@ def test_scvelo_tree_2_model_comparison(input_data_path: Path, output_dir: Path)
         
         print("\n5. Performing comprehensive analysis on dynamical model...")
         tree_manager.update_node_execution(analysis_node.id, NodeState.RUNNING)
-        state, result = node_executor.execute_node(
-            node=analysis_node,
-            input_data_path=Path(velocity_nodes[2].output_data_id),
-            output_base_dir=output_dir / tree.id
+        state, result = node_executor.execute_node(node=analysis_node, tree=tree, input_path=Path(velocity_nodes[2].output_data_id), output_base_dir=output_dir / tree.id
         )
         
         if state == NodeState.COMPLETED:
@@ -1101,10 +1083,7 @@ def test_scvelo_tree_3_driver_genes(input_data_path: Path, output_dir: Path):
     # Execute preprocessing
     print("\n1. Executing preprocessing...")
     tree_manager.update_node_execution(preprocessing_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=preprocessing_node,
-        input_data_path=input_data_path,
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=preprocessing_node, tree=tree, input_path=input_data_path, output_base_dir=output_dir / tree.id
     )
     
     if state != NodeState.COMPLETED:
@@ -1126,10 +1105,7 @@ def test_scvelo_tree_3_driver_genes(input_data_path: Path, output_dir: Path):
     # Execute velocity computation
     print("\n2. Computing dynamical velocity...")
     tree_manager.update_node_execution(velocity_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=velocity_node,
-        input_data_path=Path(preprocessing_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=velocity_node, tree=tree, input_path=Path(preprocessing_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state != NodeState.COMPLETED:
@@ -1151,10 +1127,7 @@ def test_scvelo_tree_3_driver_genes(input_data_path: Path, output_dir: Path):
     # Execute driver gene analysis
     print("\n3. Identifying driver genes...")
     tree_manager.update_node_execution(driver_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=driver_node,
-        input_data_path=Path(velocity_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=driver_node, tree=tree, input_path=Path(velocity_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state == NodeState.COMPLETED:
@@ -1292,10 +1265,7 @@ def run(adata, **kwargs):
     # Execute preprocessing
     print("\n1. Executing preprocessing (root node)...")
     tree_manager.update_node_execution(root_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=root_node,
-        input_data_path=input_data_path,
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=root_node, tree=tree, input_path=input_data_path, output_base_dir=output_dir / tree.id
     )
     
     if state != NodeState.COMPLETED:
@@ -1317,10 +1287,7 @@ def run(adata, **kwargs):
     
     print("   2.1. Computing steady-state velocity...")
     tree_manager.update_node_execution(steady_state_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=steady_state_node,
-        input_data_path=Path(root_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=steady_state_node, tree=tree, input_path=Path(root_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state != NodeState.COMPLETED:
@@ -1341,10 +1308,7 @@ def run(adata, **kwargs):
     
     print("   2.2. Running parameter sweep...")
     tree_manager.update_node_execution(sweep_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=sweep_node,
-        input_data_path=Path(steady_state_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=sweep_node, tree=tree, input_path=Path(steady_state_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state == NodeState.COMPLETED:
@@ -1365,10 +1329,7 @@ def run(adata, **kwargs):
     
     print("   3.1. Computing dynamical velocity...")
     tree_manager.update_node_execution(dynamical_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=dynamical_node,
-        input_data_path=Path(root_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=dynamical_node, tree=tree, input_path=Path(root_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state != NodeState.COMPLETED:
@@ -1393,10 +1354,7 @@ def run(adata, **kwargs):
     # Execute driver genes
     print("      3.2.1. Identifying driver genes...")
     tree_manager.update_node_execution(driver_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=driver_node,
-        input_data_path=Path(dynamical_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=driver_node, tree=tree, input_path=Path(dynamical_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state == NodeState.COMPLETED:
@@ -1413,10 +1371,7 @@ def run(adata, **kwargs):
     # Execute comprehensive analysis
     print("      3.2.2. Running comprehensive analysis...")
     tree_manager.update_node_execution(analysis_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=analysis_node,
-        input_data_path=Path(dynamical_node.output_data_id),
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=analysis_node, tree=tree, input_path=Path(dynamical_node.output_data_id), output_base_dir=output_dir / tree.id
     )
     
     if state == NodeState.COMPLETED:

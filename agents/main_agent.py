@@ -1,318 +1,681 @@
-"""Main agent for orchestrating the hierarchical analysis workflow."""
+"""Main agent that coordinates the entire analysis workflow."""
 
+import os
+import json
 from pathlib import Path
-from typing import Optional, Dict, Any
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
-from rich.tree import Tree
-from rich.panel import Panel
+from typing import Dict, Any, Optional, List, Union
+from datetime import datetime
+import uuid
 
-from .function_selector_agent import FunctionSelectorAgent
-from .bug_fixer_agent import BugFixerAgent
-from ..models import NodeState, GenerationMode, AnalysisTree, NewFunctionBlock
+from ..models import (
+    NodeState, GenerationMode, AnalysisTree, NewFunctionBlock,
+    FunctionBlockType, StaticConfig, Arg
+)
+from ..analysis_tree_management import AnalysisTreeManager, NodeExecutor
 from ..job_executors import ExecutorManager
 from ..llm_service import OpenAIService
-from ..analysis_tree_management import AnalysisTreeManager, NodeExecutor
-from ..utils.logger import get_logger
-from ..utils.data_handler import DataHandler
-from ..config import config
+from ..utils import setup_logger
+from .orchestrator_agent import OrchestratorAgent
+from .function_selector_agent import FunctionSelectorAgent
+from .function_creator_agent import FunctionCreatorAgent
+from .bug_fixer_agent import BugFixerAgent
 
-logger = get_logger(__name__)
-console = Console()
+logger = setup_logger(__name__)
 
 
 class MainAgent:
-    """Main agent that orchestrates the entire analysis workflow."""
+    """Main agent that provides the high-level interface for analysis."""
     
     def __init__(self, openai_api_key: Optional[str] = None):
-        self.executor_manager = ExecutorManager()
-        self.llm_service = OpenAIService(api_key=openai_api_key)
+        """Initialize the main agent.
+        
+        Args:
+            openai_api_key: OpenAI API key. If not provided, will try to read from environment.
+        """
+        # Get API key
+        self.api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            # Try to read from .env file
+            env_file = Path(__file__).parent.parent / ".env"
+            if env_file.exists():
+                with open(env_file) as f:
+                    for line in f:
+                        if line.startswith("OPENAI_API_KEY="):
+                            self.api_key = line.split("=", 1)[1].strip()
+                            break
+        
+        if not self.api_key:
+            logger.warning("No OpenAI API key provided. Some features may not work.")
+        
+        # Initialize components
         self.tree_manager = AnalysisTreeManager()
+        self.executor_manager = ExecutorManager()
         self.node_executor = NodeExecutor(self.executor_manager)
-        self.data_handler = DataHandler()
         
-        # Initialize sub-agents
-        self.function_selector = FunctionSelectorAgent(llm_service=self.llm_service)
-        self.bug_fixer = BugFixerAgent(llm_service=self.llm_service)
+        # Initialize LLM service if API key is available
+        if self.api_key:
+            self.llm_service = OpenAIService(api_key=self.api_key)
+            
+            # Initialize agents
+            self.function_creator = FunctionCreatorAgent(llm_service=self.llm_service)
+            self.function_selector = FunctionSelectorAgent(
+                llm_service=self.llm_service,
+                function_creator=self.function_creator
+            )
+            self.bug_fixer = BugFixerAgent(llm_service=self.llm_service)
+            self.orchestrator = OrchestratorAgent(
+                tree_manager=self.tree_manager,
+                function_selector=self.function_selector,
+                bug_fixer=self.bug_fixer
+            )
+        else:
+            self.llm_service = None
+            self.function_creator = None
+            self.function_selector = None
+            self.bug_fixer = None
+            self.orchestrator = None
+    
+    def validate_environment(self) -> Dict[str, bool]:
+        """Validate the execution environment.
         
+        Returns:
+            Dictionary with validation results for each component.
+        """
+        return self.executor_manager.validate_environment()
+    
     def run_analysis(
         self,
-        input_data_path: str,
+        input_data_path: Union[str, Path],
         user_request: str,
-        output_dir: Optional[str] = None,
+        output_dir: Optional[Union[str, Path]] = None,
         max_nodes: int = 20,
         max_children: int = 3,
         max_debug_trials: int = 3,
         generation_mode: str = "mixed",
-        llm_model: str = "gpt-4o-2024-08-06",
+        llm_model: str = "gpt-4o-mini",
         verbose: bool = False
     ) -> Dict[str, Any]:
-        """Run the complete analysis workflow."""
+        """Run the complete analysis workflow.
         
-        # Convert paths
+        Args:
+            input_data_path: Path to input data file
+            user_request: Natural language request from user
+            output_dir: Output directory (will be created if doesn't exist)
+            max_nodes: Maximum number of analysis nodes
+            max_children: Maximum children per node
+            max_debug_trials: Maximum debug attempts per node
+            generation_mode: "mixed", "only_new", or "only_existing"
+            llm_model: OpenAI model to use
+            verbose: Whether to print verbose output
+            
+        Returns:
+            Dictionary with results including output directory and execution statistics
+        """
+        # Setup paths
         input_path = Path(input_data_path)
-        output_path = Path(output_dir) if output_dir else config.results_dir / "analysis"
-        output_path.mkdir(parents=True, exist_ok=True)
-        
-        # Validate input
         if not input_path.exists():
-            raise FileNotFoundError(f"Input data not found: {input_path}")
+            raise FileNotFoundError(f"Input file not found: {input_path}")
         
-        # Load and validate data
-        console.print("[bold blue]Loading input data...[/bold blue]")
-        adata = self.data_handler.load_data(input_path)
-        data_summary = self.data_handler.get_data_summary(adata)
+        if output_dir is None:
+            output_dir = Path("outputs") / f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        else:
+            output_dir = Path(output_dir)
         
-        console.print(f"[green]✓[/green] Loaded data: {data_summary['n_obs']} cells × {data_summary['n_vars']} genes")
+        output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create analysis tree
-        mode_map = {
-            "mixed": GenerationMode.MIXED,
-            "only_new": GenerationMode.ONLY_NEW,
-            "only_existing": GenerationMode.ONLY_EXISTING
+        # Create main agent task folder with timestamp
+        task_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        temp_id = str(uuid.uuid4())[:8]
+        main_task_id = f"main_{task_timestamp}_{temp_id}"
+        main_task_dir = output_dir / main_task_id
+        main_task_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create orchestrator subfolder
+        orchestrator_dir = main_task_dir / f"orchestrator_{task_timestamp}"
+        orchestrator_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Store main task metadata
+        main_task_metadata = {
+            'task_id': main_task_id,
+            'user_request': user_request,
+            'input_data_path': str(input_path),
+            'created_at': datetime.now().isoformat(),
+            'llm_model': llm_model,
+            'generation_mode': generation_mode
         }
         
+        with open(main_task_dir / 'task_metadata.json', 'w') as f:
+            json.dump(main_task_metadata, f, indent=2)
+        
+        # Set model for LLM service
+        if self.llm_service and llm_model:
+            self.llm_service.model = llm_model
+        
+        # Create analysis tree
+        logger.info(f"Creating analysis tree for request: {user_request}")
         tree = self.tree_manager.create_tree(
             user_request=user_request,
             input_data_path=str(input_path),
             max_nodes=max_nodes,
             max_children_per_node=max_children,
             max_debug_trials=max_debug_trials,
-            generation_mode=mode_map.get(generation_mode, GenerationMode.MIXED),
+            generation_mode=GenerationMode(generation_mode),
             llm_model=llm_model
         )
         
-        console.print(f"\n[bold]Analysis Request:[/bold] {user_request}")
-        console.print(f"[bold]Configuration:[/bold] max_nodes={max_nodes}, max_children={max_children}, mode={generation_mode}\n")
+        # Update main task ID with actual tree ID
+        updated_main_task_id = f"main_{task_timestamp}_{tree.id[:8]}"
+        updated_main_task_dir = output_dir / updated_main_task_id
+        if main_task_dir.name != updated_main_task_dir.name:
+            main_task_dir.rename(updated_main_task_dir)
+            main_task_dir = updated_main_task_dir
+            orchestrator_dir = main_task_dir / f"orchestrator_{task_timestamp}"
         
-        # Main execution loop
-        iteration = 0
-        satisfied = False
-        current_data_path = input_path
+        # Create tree directory with new structure
+        tree_dir = output_dir / f"tree_{tree.id}"
+        tree_dir.mkdir(parents=True, exist_ok=True)
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            console=console
-        ) as progress:
+        # Create nodes directory
+        nodes_dir = tree_dir / "nodes"
+        nodes_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create tree-level agent_tasks directory
+        tree_agent_tasks_dir = tree_dir / "agent_tasks"
+        tree_agent_tasks_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save tree metadata
+        tree_metadata = {
+            "id": tree.id,
+            "user_request": tree.user_request,
+            "input_data_path": tree.input_data_path,
+            "created_at": datetime.now().isoformat(),
+            "generation_mode": tree.generation_mode.value if hasattr(tree.generation_mode, 'value') else str(tree.generation_mode),
+            "max_nodes": tree.max_nodes,
+            "max_children_per_node": tree.max_children_per_node,
+            "max_debug_trials": tree.max_debug_trials
+        }
+        with open(tree_dir / "tree_metadata.json", 'w') as f:
+            json.dump(tree_metadata, f, indent=2)
+        
+        # Save analysis tree
+        tree_file = tree_dir / "analysis_tree.json"
+        self.tree_manager.save_tree(tree_file)
+        
+        # Also save in orchestrator folder for reference
+        self.tree_manager.save_tree(orchestrator_dir / "analysis_tree.json")
+        
+        if not self.llm_service:
+            # If no LLM service, create a simple preprocessing node for testing
+            logger.warning("No LLM service available. Creating default preprocessing node.")
+            self._create_default_node(tree, input_path)
+        else:
+            # Use LLM to generate analysis plan
+            self._generate_analysis_plan(tree, user_request, input_path, output_dir, verbose, orchestrator_dir)
+        
+        # Execute the analysis tree
+        results = self._execute_tree(tree, input_path, output_dir, verbose, main_task_dir)
+        
+        # Save final tree in tree directory
+        tree_dir = output_dir / f"tree_{tree.id}"
+        tree_file = tree_dir / "analysis_tree.json"
+        self.tree_manager.save_tree(tree_file)
+        
+        # Prepare result summary with new structure paths
+        return {
+            "output_dir": str(output_dir),
+            "tree_dir": str(tree_dir),
+            "tree_id": tree.id,
+            "total_nodes": tree.total_nodes,
+            "completed_nodes": tree.completed_nodes,
+            "failed_nodes": tree.failed_nodes,
+            "tree_file": str(tree_file),
+            "nodes_dir": str(tree_dir / "nodes"),
+            "results": results
+        }
+    
+    def _create_default_node(self, tree: AnalysisTree, input_path: Path):
+        """Create a default preprocessing node for testing."""
+        # Create a simple preprocessing block
+        code = '''
+def run(adata, **parameters):
+    """Basic preprocessing for single-cell data."""
+    import scanpy as sc
+    
+    # Basic filtering
+    sc.pp.filter_cells(adata, min_genes=200)
+    sc.pp.filter_genes(adata, min_cells=3)
+    
+    # Calculate QC metrics
+    adata.var['mt'] = adata.var_names.str.startswith('MT-')
+    sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], percent_top=None, log1p=False, inplace=True)
+    
+    # Filter cells
+    adata = adata[adata.obs.n_genes_by_counts < 2500, :]
+    adata = adata[adata.obs.pct_counts_mt < 5, :]
+    
+    # Normalization
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    
+    # Find highly variable genes
+    sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+    adata.raw = adata
+    adata = adata[:, adata.var.highly_variable]
+    
+    # PCA
+    sc.pp.scale(adata, max_value=10)
+    sc.tl.pca(adata, svd_solver='arpack')
+    
+    # Neighborhood graph
+    sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)
+    
+    # UMAP
+    sc.tl.umap(adata)
+    
+    # Clustering
+    sc.tl.leiden(adata)
+    
+    print(f"Preprocessed data: {adata.shape}")
+    return adata
+'''
+        
+        static_config = StaticConfig(
+            args=[],
+            description="Basic preprocessing for single-cell data",
+            tag="preprocessing"
+        )
+        
+        block = NewFunctionBlock(
+            name="basic_preprocessing",
+            type=FunctionBlockType.PYTHON,
+            description="Basic preprocessing pipeline",
+            static_config=static_config,
+            code=code,
+            requirements="scanpy\nnumpy\npandas",
+            parameters={}
+        )
+        
+        # Add as root node
+        self.tree_manager.add_root_node(block)
+    
+    def _generate_analysis_plan(
+        self, 
+        tree: AnalysisTree, 
+        user_request: str,
+        input_path: Path,
+        output_dir: Path,
+        verbose: bool,
+        orchestrator_dir: Path
+    ):
+        """Generate analysis plan using LLM."""
+        logger.info("Generating analysis plan with LLM...")
+        
+        # Use function selector to generate initial function blocks
+        context = {
+            "user_request": user_request,
+            "input_data_path": str(input_path),
+            "tree_state": self._get_tree_state(tree),
+            "generation_mode": tree.generation_mode,
+            "tree": tree,
+            "max_children": tree.max_children_per_node
+        }
+        
+        try:
+            # Track orchestrator task for function selection
+            selector_task_id = f"selector_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:17]}"
+            selector_task_dir = orchestrator_dir / selector_task_id
+            selector_task_dir.mkdir(parents=True, exist_ok=True)
             
-            while not satisfied and self.tree_manager.can_continue_expansion():
-                iteration += 1
+            # Save context for selector
+            with open(selector_task_dir / 'context.json', 'w') as f:
+                json.dump({
+                    'user_request': user_request,
+                    'input_data_path': str(input_path),
+                    'generation_mode': tree.generation_mode.value if hasattr(tree.generation_mode, 'value') else str(tree.generation_mode),
+                    'timestamp': datetime.now().isoformat()
+                }, f, indent=2)
+            
+            # Get function block recommendations
+            recommendations = self.function_selector.process(context)
+            
+            # Save selector results
+            with open(selector_task_dir / 'results.json', 'w') as f:
+                json.dump({
+                    'satisfied': recommendations.get('satisfied', False),
+                    'reasoning': recommendations.get('reasoning', ''),
+                    'num_blocks': len(recommendations.get('function_blocks', [])),
+                    'timestamp': datetime.now().isoformat()
+                }, f, indent=2)
+            
+            function_blocks = recommendations.get('function_blocks', [])
+            
+            if verbose:
+                logger.info(f"Generated {len(function_blocks)} function blocks")
+            
+            # Add function blocks to tree and track creation tasks
+            for i, block in enumerate(function_blocks):
+                if i >= tree.max_nodes:
+                    break
                 
-                # Get next batch of nodes to execute
-                pending_nodes = self.tree_manager.get_execution_order()
+                # The block is already a NewFunctionBlock or ExistingFunctionBlock object
+                if i == 0:
+                    # Add as root node
+                    node = self.tree_manager.add_root_node(block)
+                else:
+                    # Add as child of previous node
+                    parent_id = list(tree.nodes.keys())[i-1]
+                    nodes = self.tree_manager.add_child_nodes(parent_id, [block])
+                    if nodes:
+                        node = nodes[0]
                 
-                if not pending_nodes:
-                    # Generate new nodes
-                    task = progress.add_task("Generating analysis plan...", total=1)
+                # Track function creation in node's directory with new structure
+                if node:
+                    # Create node directory in the new structure
+                    tree_dir = output_dir / f"tree_{tree.id}"
+                    node_dir = tree_dir / "nodes" / f"node_{node.id}"
+                    node_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Get context for generation
-                    if tree.root_node_id:
-                        # Find leaf nodes that need expansion
-                        leaf_nodes = [
-                            node for node in tree.nodes.values()
-                            if node.state == NodeState.COMPLETED and not node.children
-                        ]
+                    # Create agent_tasks directory for this node
+                    agent_tasks_dir = node_dir / "agent_tasks"
+                    agent_tasks_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Save node info
+                    node_info = {
+                        "id": node.id,
+                        "name": block.name,
+                        "type": block.type.value if hasattr(block.type, 'value') else str(block.type),
+                        "parent_id": node.parent_id,
+                        "children_ids": node.children,
+                        "state": "pending",
+                        "created_at": datetime.now().isoformat(),
+                        "level": node.level
+                    }
+                    with open(node_dir / "node_info.json", 'w') as f:
+                        json.dump(node_info, f, indent=2)
+                    
+                    # Create creator task directory in node's agent_tasks
+                    creator_task_id = f"creator_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:17]}_{node.id[:8]}"
+                    creator_task_dir = agent_tasks_dir / creator_task_id
+                    creator_task_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Save creator task info
+                    creator_task_record = {
+                        'task_id': creator_task_id,
+                        'node_id': node.id,
+                        'function_block_name': block.name,
+                        'function_block_type': block.type.value if hasattr(block.type, 'value') else str(block.type),
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    # Save in node's agent_tasks folder
+                    with open(creator_task_dir / 'task_info.json', 'w') as f:
+                        json.dump(creator_task_record, f, indent=2)
+                    
+                    # Save the generated code
+                    if hasattr(block, 'code'):
+                        with open(creator_task_dir / 'generated_code.py', 'w') as f:
+                            f.write(block.code)
+                    
+                    # Also save reference in orchestrator folder
+                    with open(orchestrator_dir / f'{creator_task_id}.json', 'w') as f:
+                        json.dump({
+                            'task_id': creator_task_id,
+                            'node_id': node.id,
+                            'function_block_name': block.name,
+                            'task_location': str(creator_task_dir),
+                            'timestamp': datetime.now().isoformat()
+                        }, f, indent=2)
+                
+                if verbose:
+                    logger.info(f"Added node: {block.name}")
+                    
+        except Exception as e:
+            logger.error(f"Error generating analysis plan: {e}")
+            # Fall back to default node
+            self._create_default_node(tree, input_path)
+    
+    
+    def _execute_tree(
+        self, 
+        tree: AnalysisTree,
+        input_path: Path,
+        output_dir: Path,
+        verbose: bool,
+        main_task_dir: Path
+    ) -> Dict[str, Any]:
+        """Execute all nodes in the analysis tree."""
+        results = {}
+        
+        # Execute nodes in order (by level)
+        nodes_by_level = {}
+        for node in tree.nodes.values():
+            level = node.level
+            if level not in nodes_by_level:
+                nodes_by_level[level] = []
+            nodes_by_level[level].append(node)
+        
+        current_input = input_path
+        
+        for level in sorted(nodes_by_level.keys()):
+            for node in nodes_by_level[level]:
+                if node.state == NodeState.COMPLETED:
+                    continue
+                
+                logger.info(f"Executing node: {node.function_block.name}")
+                
+                # Update state
+                self.tree_manager.update_node_execution(node.id, NodeState.RUNNING)
+                
+                try:
+                    # Use new structure: tree_TREEID/nodes/node_NODEID
+                    tree_dir = output_dir / f"tree_{tree.id}"
+                    node_dir = tree_dir / "nodes" / f"node_{node.id}"
+                    
+                    # Node directory should already exist from generation phase
+                    if not node_dir.exists():
+                        node_dir.mkdir(parents=True, exist_ok=True)
                         
-                        for leaf_node in leaf_nodes[:max_children]:  # Limit parallel expansion
-                            parent_chain = self.tree_manager.get_parent_chain(leaf_node.id)
-                            
-                            # Get latest data
-                            latest_data_path = self.tree_manager.get_latest_data_path(leaf_node.id)
-                            
-                            # Use function selector agent
-                            context = {
-                                'user_request': user_request,
-                                'tree': tree,
-                                'current_node': leaf_node,
-                                'parent_chain': parent_chain,
-                                'generation_mode': tree.generation_mode,
-                                'max_children': max_children,
-                                'data_path': latest_data_path
-                            }
-                            
-                            result = self.function_selector.process(context)
-                            
-                            satisfied = result['satisfied']
-                            
-                            if result['function_blocks']:
-                                # Add child nodes
-                                self.tree_manager.add_child_nodes(leaf_node.id, result['function_blocks'])
-                            
-                            if satisfied:
-                                console.print("[green]✓[/green] Analysis request satisfied!")
-                                break
-                    else:
-                        # Create root node
-                        context = {
-                            'user_request': user_request,
-                            'tree': tree,
-                            'current_node': None,
-                            'parent_chain': [],
-                            'generation_mode': tree.generation_mode,
-                            'max_children': 1,  # Root should be single
-                            'data_path': input_path
+                        # Create node info if it doesn't exist
+                        node_info = {
+                            "id": node.id,
+                            "name": node.function_block.name,
+                            "type": node.function_block.type.value if hasattr(node.function_block.type, 'value') else str(node.function_block.type),
+                            "parent_id": node.parent_id,
+                            "children_ids": node.children,
+                            "state": "running",
+                            "created_at": datetime.now().isoformat(),
+                            "level": node.level
                         }
-                        
-                        result = self.function_selector.process(context)
-                        
-                        if result['function_blocks']:
-                            self.tree_manager.add_root_node(result['function_blocks'][0])
+                        with open(node_dir / "node_info.json", 'w') as f:
+                            json.dump(node_info, f, indent=2)
                     
-                    progress.update(task, completed=1)
-                    progress.remove_task(task)
+                    # Get agent_tasks directory (should exist)
+                    agent_tasks_dir = node_dir / "agent_tasks"
+                    if not agent_tasks_dir.exists():
+                        agent_tasks_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Get updated pending nodes
-                    pending_nodes = self.tree_manager.get_execution_order()
-                
-                # Execute pending nodes
-                for node in pending_nodes:
-                    task = progress.add_task(f"Executing: {node.function_block.name}", total=1)
-                    
-                    # Update node state
-                    self.tree_manager.update_node_execution(node.id, NodeState.RUNNING)
-                    
-                    # Get input data path
-                    node_input_path = self.tree_manager.get_latest_data_path(node.id) or current_data_path
-                    
-                    # Execute node
-                    state, result = self.node_executor.execute_node(
+                    # Execute node (this will create job directories under node_dir)
+                    state, output_path = self.node_executor.execute_node(
                         node=node,
-                        input_data_path=node_input_path,
-                        output_base_dir=output_path
+                        tree=tree,
+                        input_path=current_input,
+                        output_base_dir=output_dir
                     )
                     
-                    # Handle execution result
-                    if state == NodeState.COMPLETED:
-                        self.tree_manager.update_node_execution(
-                            node.id,
-                            state=state,
-                            output_data_id=result.output_data_path,
-                            figures=result.figures,
-                            logs=[result.logs] if result.logs else [],
-                            duration=result.duration
-                        )
-                        
-                        if result.output_data_path:
-                            current_data_path = Path(result.output_data_path)
-                            
-                        console.print(f"[green]✓[/green] {node.function_block.name}")
-                        
-                    elif state == NodeState.FAILED:
-                        # Try debugging if we haven't exceeded attempts
-                        if node.debug_attempts < max_debug_trials:
-                            console.print(f"[yellow]![/yellow] {node.function_block.name} failed, attempting to fix...")
-                            
-                            # Increment debug attempts
-                            self.tree_manager.increment_debug_attempts(node.id)
-                            
-                            # Use bug fixer agent
-                            if isinstance(node.function_block, NewFunctionBlock):
-                                fix_context = {
-                                    'function_block': node.function_block,
-                                    'error_message': result.error or "Unknown error",
-                                    'stdout': result.stdout,
-                                    'stderr': result.stderr,
-                                    'analysis_id': tree.id,
-                                    'node_id': node.id,
-                                    'job_id': result.job_id
-                                }
-                                
-                                fix_result = self.bug_fixer.process(fix_context)
-                                
-                                if fix_result['success'] and fix_result.get('fixed_code'):
-                                    # Update the function block code
-                                    node.function_block.code = fix_result['fixed_code']
-                                    if fix_result.get('fixed_requirements'):
-                                        node.function_block.requirements = fix_result['fixed_requirements']
-                                    # Mark as pending to retry
-                                    self.tree_manager.update_node_execution(node.id, NodeState.PENDING)
-                                    continue
-                        
-                        # Mark as failed
-                        self.tree_manager.update_node_execution(
-                            node.id,
-                            state=state,
-                            error=result.error,
-                            logs=[result.logs] if result.logs else [],
-                            duration=result.duration
-                        )
-                        
-                        console.print(f"[red]✗[/red] {node.function_block.name}: {result.error}")
+                    # Update tree
+                    self.tree_manager.update_node_execution(
+                        node.id, 
+                        state,
+                        output_data_id=output_path
+                    )
                     
-                    progress.update(task, completed=1)
-                    progress.remove_task(task)
-                
-                # Save tree state
-                tree_path = output_path / "analysis_tree.json"
-                self.tree_manager.save_tree(tree_path)
+                    if state == NodeState.COMPLETED and output_path:
+                        # With new structure, output_path points to outputs directory
+                        current_input = Path(output_path) / "output_data.h5ad"
+                        if not current_input.exists():
+                            # Try alternative path
+                            current_input = Path(output_path)
+                        
+                        results[node.id] = {
+                            "name": node.function_block.name,
+                            "state": "completed",
+                            "output": str(output_path)
+                        }
+                        
+                        if verbose:
+                            logger.info(f"  ✓ Completed: {node.function_block.name}")
+                    else:
+                        # Try to fix with bug fixer if available
+                        if self.bug_fixer and node.debug_attempts < tree.max_debug_trials:
+                            logger.info(f"Attempting to fix failed node: {node.function_block.name}")
+                            
+                            # Create bug fixer task directory
+                            fixer_task_id = f"fixer_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:17]}_{node.id[:8]}"
+                            fixer_task_dir = agent_tasks_dir / fixer_task_id
+                            fixer_task_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            fixed_block = self._fix_failed_node(node, tree, fixer_task_dir)
+                            if fixed_block:
+                                # Update node with fixed block
+                                node.function_block = fixed_block
+                                node.debug_attempts += 1
+                                # Retry execution
+                                state, output_path = self.node_executor.execute_node(
+                                    node=node,
+                                    tree=tree,
+                                    input_path=current_input,
+                                    output_base_dir=output_dir
+                                )
+                                
+                                if state == NodeState.COMPLETED:
+                                    self.tree_manager.update_node_execution(
+                                        node.id,
+                                        state,
+                                        output_data_id=output_path
+                                    )
+                                    # Update input path for next node
+                                current_input = Path(output_path) / "output_data.h5ad"
+                                if not current_input.exists():
+                                    current_input = Path(output_path)
+                                    results[node.id] = {
+                                        "name": node.function_block.name,
+                                        "state": "completed_after_fix",
+                                        "output": str(output_path)
+                                    }
+                        
+                        if node.state != NodeState.COMPLETED:
+                            results[node.id] = {
+                                "name": node.function_block.name,
+                                "state": "failed",
+                                "error": node.error
+                            }
+                            
+                            if verbose:
+                                logger.error(f"  ✗ Failed: {node.function_block.name}")
+                                
+                except Exception as e:
+                    logger.error(f"Error executing node {node.id}: {e}")
+                    self.tree_manager.update_node_execution(
+                        node.id,
+                        NodeState.FAILED,
+                        error=str(e)
+                    )
+                    results[node.id] = {
+                        "name": node.function_block.name,
+                        "state": "failed",
+                        "error": str(e)
+                    }
         
-        # Display results
-        self._display_results(tree, output_path)
-        
-        # Get summary
-        summary = self.tree_manager.get_summary()
-        summary["output_dir"] = str(output_path)
-        summary["satisfied"] = satisfied
-        
-        return summary
+        return results
     
-    def _display_results(self, tree: AnalysisTree, output_dir: Path) -> None:
-        """Display analysis results."""
-        
-        # Build tree visualization
-        tree_viz = Tree(f"[bold]Analysis Tree[/bold] ({tree.id[:8]}...)")
-        
-        def add_node_to_viz(node_id: str, parent_branch):
-            node = tree.get_node(node_id)
-            if not node:
-                return
-                
-            # Node status icon
-            status_icon = {
-                NodeState.COMPLETED: "[green]✓[/green]",
-                NodeState.FAILED: "[red]✗[/red]",
-                NodeState.PENDING: "[yellow]○[/yellow]",
-                NodeState.RUNNING: "[blue]●[/blue]"
-            }.get(node.state, "?")
+    def _fix_failed_node(self, node: Any, tree: AnalysisTree, fixer_task_dir: Optional[Path] = None) -> Optional[NewFunctionBlock]:
+        """Attempt to fix a failed node using bug fixer agent."""
+        if not self.bug_fixer:
+            return None
             
-            # Add node to tree
-            node_text = f"{status_icon} {node.function_block.name}"
-            if node.duration:
-                node_text += f" [dim]({node.duration:.1f}s)[/dim]"
+        # Parse error and logs to get stdout/stderr
+        error_message = node.error or ""
+        stdout = ""
+        stderr = ""
+        
+        # Extract from logs if available
+        if isinstance(node.logs, list):
+            stdout = "\n".join([log for log in node.logs if not log.startswith("ERROR")])
+            stderr = "\n".join([log for log in node.logs if log.startswith("ERROR")])
+        elif isinstance(node.logs, str):
+            stdout = node.logs
+        
+        # If error contains stderr, extract it
+        if "STDERR:" in error_message:
+            parts = error_message.split("STDERR:")
+            stderr = parts[1] if len(parts) > 1 else stderr
+            error_message = parts[0]
+        
+        context = {
+            "function_block": node.function_block,
+            "error_message": error_message,
+            "stdout": stdout,
+            "stderr": stderr
+        }
+        
+        # Save bug fixer context if task dir provided
+        if fixer_task_dir:
+            with open(fixer_task_dir / 'context.json', 'w') as f:
+                json.dump({
+                    'node_id': node.id,
+                    'function_block_name': node.function_block.name,
+                    'error_message': error_message[:1000],  # Truncate for storage
+                    'debug_attempt': node.debug_attempts + 1,
+                    'timestamp': datetime.now().isoformat()
+                }, f, indent=2)
+        
+        try:
+            result = self.bug_fixer.process(context)
+            if result and result.get('success') and result.get('fixed_code'):
+                # Create a new function block with the fixed code
+                fixed_block = NewFunctionBlock(
+                    name=node.function_block.name,
+                    type=node.function_block.type,
+                    description=node.function_block.description,
+                    code=result['fixed_code'],
+                    requirements=result.get('fixed_requirements', node.function_block.requirements),
+                    parameters=node.function_block.parameters,
+                    static_config=node.function_block.static_config
+                )
                 
-            branch = parent_branch.add(node_text)
+                # Save fix result if task dir provided
+                if fixer_task_dir:
+                    with open(fixer_task_dir / 'result.json', 'w') as f:
+                        json.dump({
+                            'success': True,
+                            'reasoning': result.get('reasoning', 'Fixed using bug fixer'),
+                            'timestamp': datetime.now().isoformat()
+                        }, f, indent=2)
+                    
+                    # Save fixed code
+                    with open(fixer_task_dir / 'fixed_code.py', 'w') as f:
+                        f.write(result['fixed_code'])
+                
+                logger.info(f"Successfully generated fix for {node.function_block.name}")
+                return fixed_block
+        except Exception as e:
+            logger.error(f"Error fixing node: {e}")
             
-            # Add children
-            for child_id in node.children:
-                add_node_to_viz(child_id, branch)
-        
-        # Build tree from root
-        if tree.root_node_id:
-            add_node_to_viz(tree.root_node_id, tree_viz)
-        
-        console.print("\n")
-        console.print(tree_viz)
-        
-        # Summary panel
-        summary = self.tree_manager.get_summary()
-        summary_text = f"""
-[bold]Analysis Summary[/bold]
-
-Total Nodes: {summary['total_nodes']}
-Completed: [green]{summary['completed_nodes']}[/green]
-Failed: [red]{summary['failed_nodes']}[/red]
-Pending: [yellow]{summary['pending_nodes']}[/yellow]
-
-Total Duration: {summary['total_duration_seconds']:.1f}s
-Max Depth: {summary['max_depth']}
-
-Output Directory: {output_dir}
-"""
-        
-        console.print(Panel(summary_text.strip(), title="Results", border_style="green"))
+        return None
     
-    def validate_environment(self) -> Dict[str, bool]:
-        """Validate the execution environment."""
-        return self.executor_manager.validate_environment()
+    def _get_tree_state(self, tree: AnalysisTree) -> Dict[str, Any]:
+        """Get current state of the analysis tree."""
+        return {
+            "total_nodes": tree.total_nodes,
+            "completed_nodes": tree.completed_nodes,
+            "failed_nodes": tree.failed_nodes,
+            "nodes": [
+                {
+                    "id": node.id,
+                    "name": node.function_block.name,
+                    "state": node.state,
+                    "level": node.level
+                }
+                for node in tree.nodes.values()
+            ]
+        }

@@ -333,10 +333,7 @@ def test_bug_fixer_with_real_execution():
     # Execute preprocessing
     print("   Executing preprocessing...")
     tree_manager.update_node_execution(preprocess_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=preprocess_node,
-        input_data_path=input_data,
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=preprocess_node, tree=tree, input_path=input_data, output_base_dir=output_dir / tree.id
     )
     
     if state == NodeState.COMPLETED:
@@ -362,10 +359,7 @@ def test_bug_fixer_with_real_execution():
     tree_manager.update_node_execution(scfates_node.id, NodeState.RUNNING)
     
     input_path = Path(result.output_data_path) if result.output_data_path else input_data
-    state, exec_result = node_executor.execute_node(
-        node=scfates_node,
-        input_data_path=input_path,
-        output_base_dir=output_dir / tree.id
+    state, exec_result = node_executor.execute_node(node=scfates_node, tree=tree, input_path=input_path, output_base_dir=output_dir / tree.id
     )
     
     print(f"   Result: {state}")
@@ -415,10 +409,7 @@ def test_bug_fixer_with_real_execution():
             
             # Retry execution
             tree_manager.update_node_execution(scfates_node.id, NodeState.RUNNING)
-            state2, result2 = node_executor.execute_node(
-                node=scfates_node,
-                input_data_path=input_path,
-                output_base_dir=output_dir / tree.id
+            state2, result2 = node_executor.execute_node(node=scfates_node, tree=tree, input_path=input_path, output_base_dir=output_dir / tree.id
             )
             
             print(f"   Retry result: {state2}")

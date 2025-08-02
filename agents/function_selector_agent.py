@@ -15,18 +15,35 @@ from ..models import (
     FunctionBlockType, StaticConfig
 )
 from ..llm_service import OpenAIService
-from ..llm_service.prompt_builder import PromptBuilder
 from ..utils.data_handler import DataHandler
 
 
 class FunctionSelectorAgent(BaseAgent):
     """Agent that selects existing or creates new function blocks based on analysis needs."""
     
-    def __init__(self, llm_service: Optional[OpenAIService] = None, task_manager=None):
+    SYSTEM_PROMPT = """You are an expert bioinformatics analyst specializing in single-cell RNA sequencing data analysis.
+Your task is to recommend function blocks that process AnnData objects to fulfill user requests.
+
+You should:
+1. Analyze what has been done so far
+2. Determine what needs to be done next
+3. Recommend appropriate function blocks (either existing or new)
+4. Ensure logical progression of the analysis workflow
+
+Common single-cell analysis workflows include:
+- Quality control and filtering
+- Normalization and scaling  
+- Dimensionality reduction (PCA, UMAP, t-SNE)
+- Clustering (Leiden, Louvain)
+- Differential expression analysis
+- Trajectory inference
+- Cell type annotation"""
+    
+    def __init__(self, llm_service: Optional[OpenAIService] = None, task_manager=None, function_creator=None):
         super().__init__("function_selector", task_manager)
         self.llm_service = llm_service
         self.data_handler = DataHandler()
-        self.prompt_builder = PromptBuilder()
+        self.function_creator = function_creator
         
     def process(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Select or create function blocks for the next analysis step.
@@ -105,7 +122,7 @@ class FunctionSelectorAgent(BaseAgent):
             )
             
             # Convert recommendation to function blocks
-            function_blocks = self._convert_to_function_blocks(recommendation)
+            function_blocks = self._convert_to_function_blocks(recommendation, user_request)
             
             result = {
                 'function_blocks': function_blocks,
@@ -121,6 +138,70 @@ class FunctionSelectorAgent(BaseAgent):
             # Mock implementation for testing
             return self._mock_select_function_blocks(context)
     
+    def _build_selection_prompt(
+        self,
+        user_request: str,
+        current_node: Optional[Any] = None,
+        parent_nodes: List[Any] = None,
+        max_branches: int = 3,
+        generation_mode: GenerationMode = GenerationMode.MIXED,
+        data_summary: Optional[Dict[str, Any]] = None,
+        rest_task: Optional[str] = None
+    ) -> str:
+        """Build prompt for function block selection/generation."""
+        
+        prompt_parts = []
+        
+        # Add context about the analysis
+        prompt_parts.append("## Analysis Context\n")
+        prompt_parts.append(f"User Request: {user_request}\n")
+        
+        if rest_task:
+            prompt_parts.append(f"Remaining Tasks: {rest_task}\n")
+        
+        # Add data summary
+        if data_summary:
+            prompt_parts.append("\n## Current Data State\n")
+            prompt_parts.append(f"- Shape: {data_summary.get('n_obs', 'unknown')} observations × {data_summary.get('n_vars', 'unknown')} variables")
+            prompt_parts.append(f"- Observations columns: {', '.join(data_summary.get('obs_columns', []))}")
+            prompt_parts.append(f"- Layers: {', '.join(data_summary.get('layers', []))}")
+            prompt_parts.append(f"- Embeddings: {', '.join(data_summary.get('obsm_keys', []))}")
+            prompt_parts.append(f"- Annotations: {', '.join(data_summary.get('uns_keys', []))}")
+        
+        # Add parent node context
+        if parent_nodes:
+            prompt_parts.append("\n## Previous Analysis Steps\n")
+            for i, node in enumerate(parent_nodes):
+                prompt_parts.append(f"{i+1}. {node.function_block.name}: {node.function_block.description}")
+        
+        # Add current node if exists
+        if current_node:
+            prompt_parts.append(f"\nCurrent Step: {current_node.function_block.name}")
+            prompt_parts.append(f"Description: {current_node.function_block.description}")
+        
+        # Add generation instructions
+        prompt_parts.append(f"\n## Task\n")
+        prompt_parts.append(f"Recommend up to {max_branches} function blocks for the next analysis steps.")
+        
+        if generation_mode == GenerationMode.ONLY_NEW:
+            prompt_parts.append("Generate NEW function blocks with descriptions.")
+            prompt_parts.append("For each new block, provide:")
+            prompt_parts.append("- name: descriptive snake_case name")
+            prompt_parts.append("- task description: what it should do")
+            prompt_parts.append("- required parameters and their types")
+        elif generation_mode == GenerationMode.ONLY_EXISTING:
+            prompt_parts.append("Select from EXISTING function blocks in the library.")
+        else:
+            prompt_parts.append("You may either recommend NEW function blocks or select EXISTING ones.")
+        
+        prompt_parts.append("\nConsider:")
+        prompt_parts.append("- What analysis steps are needed to fulfill the user request?")
+        prompt_parts.append("- What has already been done in previous steps?")
+        prompt_parts.append("- What logical next steps would progress toward the goal?")
+        prompt_parts.append("- Are we satisfied that the request has been fulfilled?")
+        
+        return "\n".join(prompt_parts)
+    
     def _generate_function_blocks(
         self,
         user_request: str,
@@ -135,7 +216,7 @@ class FunctionSelectorAgent(BaseAgent):
         """Generate or select function blocks for next analysis steps."""
         
         # Build the prompt
-        prompt = self.prompt_builder.build_generation_prompt(
+        prompt = self._build_selection_prompt(
             user_request=user_request,
             current_node=current_node,
             parent_nodes=parent_nodes or [],
@@ -155,7 +236,17 @@ class FunctionSelectorAgent(BaseAgent):
                         "satisfied": {"type": "boolean"},
                         "next_level_function_blocks": {
                             "type": "array",
-                            "items": FunctionBlockContent.model_json_schema()
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "task_description": {"type": "string"},
+                                    "parameters": {"type": "object"},
+                                    "new": {"type": "boolean"},
+                                    "rest_task": {"type": ["string", "null"]}
+                                },
+                                "required": ["name", "task_description"]
+                            }
                         },
                         "reasoning": {"type": "string"}
                     },
@@ -189,7 +280,7 @@ class FunctionSelectorAgent(BaseAgent):
             self.logger.info(f"Generating function blocks with {self.llm_service.model}")
             
             messages = [
-                {"role": "system", "content": self.prompt_builder.SYSTEM_PROMPT},
+                {"role": "system", "content": self.SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
             ]
             
@@ -208,6 +299,10 @@ class FunctionSelectorAgent(BaseAgent):
                     model=self.llm_service.model,
                     metadata={'generation_mode': generation_mode.value}
                 )
+            
+            # Ensure reasoning field exists
+            if 'reasoning' not in result:
+                result['reasoning'] = 'Generated function blocks for analysis'
             
             # Convert to FunctionBlockRecommendation
             recommendation = FunctionBlockRecommendation(**result)
@@ -228,7 +323,9 @@ class FunctionSelectorAgent(BaseAgent):
     
     def _convert_to_function_blocks(
         self, 
-        recommendation: FunctionBlockRecommendation
+        recommendation: FunctionBlockRecommendation,
+        user_request: str = "",
+        task_dir: Optional[Path] = None
     ) -> List[Union[NewFunctionBlock, ExistingFunctionBlock]]:
         """Convert recommendation to function block objects."""
         
@@ -236,28 +333,27 @@ class FunctionSelectorAgent(BaseAgent):
         
         for fb_data in recommendation.next_level_function_blocks:
             if isinstance(fb_data, FunctionBlockContent) or (isinstance(fb_data, dict) and fb_data.get('new', False)):
-                # New function block
-                # Determine language from code
-                code = fb_data.function_block_code if hasattr(fb_data, 'function_block_code') else fb_data['function_block_code']
-                fb_type = FunctionBlockType.R if 'library(' in code or '<-' in code else FunctionBlockType.PYTHON
-                
-                static_config_data = fb_data.static_config_file_content if hasattr(fb_data, 'static_config_file_content') else fb_data['static_config_file_content']
-                if isinstance(static_config_data, dict):
-                    static_config = StaticConfig(**static_config_data)
+                # New function block - use function creator
+                if self.function_creator:
+                    # Get task description
+                    task_desc = fb_data.task_description if hasattr(fb_data, 'task_description') else fb_data.get('task_description', '')
+                    
+                    # Create context for function creator
+                    creator_context = {
+                        'task_description': task_desc,
+                        'user_request': user_request,
+                        'parameters': fb_data.parameters if hasattr(fb_data, 'parameters') else fb_data.get('parameters', {}),
+                        'task_dir': task_dir  # Pass task_dir for saving LLM interactions
+                    }
+                    
+                    # Create the function block
+                    fb = self.function_creator.process(creator_context)
+                    if fb:
+                        function_blocks.append(fb)
+                    else:
+                        self.logger.warning(f"Failed to create function block: {fb_data.name if hasattr(fb_data, 'name') else fb_data.get('name')}")
                 else:
-                    static_config = static_config_data
-                
-                fb = NewFunctionBlock(
-                    name=fb_data.name if hasattr(fb_data, 'name') else fb_data['name'],
-                    type=fb_type,
-                    description=static_config.description,
-                    code=code,
-                    requirements=fb_data.requirements_file_content if hasattr(fb_data, 'requirements_file_content') else fb_data['requirements_file_content'],
-                    parameters=fb_data.parameters if hasattr(fb_data, 'parameters') else fb_data.get('parameters', {}),
-                    static_config=static_config,
-                    rest_task=fb_data.rest_task if hasattr(fb_data, 'rest_task') else fb_data.get('rest_task')
-                )
-                function_blocks.append(fb)
+                    self.logger.warning("No function creator available, skipping new function block")
                 
             else:
                 # Existing function block reference

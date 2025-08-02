@@ -9,9 +9,7 @@ from ..models import StaticConfig
 class FunctionBlockContent(BaseModel):
     """Schema for new function block generation."""
     name: str
-    function_block_code: str
-    requirements_file_content: str
-    static_config_file_content: StaticConfig
+    task_description: str  # What the function should do
     parameters: Dict[str, Any] = Field(default_factory=dict)
     new: bool = True
     rest_task: Optional[str] = None

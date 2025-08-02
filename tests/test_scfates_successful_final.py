@@ -495,10 +495,7 @@ def run_workflow():
     # Step 3: Run failing
     print("\n3. Running failing block...")
     tree_manager.update_node_execution(failing_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=failing_node,
-        input_data_path=dummy_file,
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=failing_node, tree=tree, input_path=dummy_file, output_base_dir=output_dir / tree.id
     )
     
     print(f"   Result: {state}")
@@ -538,10 +535,7 @@ def run_workflow():
     # Step 6: Run fixed
     print("\n6. Running fixed block...")
     tree_manager.update_node_execution(fixed_node.id, NodeState.RUNNING)
-    state, result = node_executor.execute_node(
-        node=fixed_node,
-        input_data_path=dummy_file,
-        output_base_dir=output_dir / tree.id
+    state, result = node_executor.execute_node(node=fixed_node, tree=tree, input_path=dummy_file, output_base_dir=output_dir / tree.id
     )
     
     print(f"   Result: {state}")

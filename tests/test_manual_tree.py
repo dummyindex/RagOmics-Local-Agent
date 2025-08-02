@@ -354,7 +354,7 @@ def main():
     
     # Paths
     input_data = Path("/Users/random/Ragomics-workspace-all/data/zebrafish.h5ad")
-    output_dir = Path("test_outputs/manual_tree")
+    output_dir = Path("test_outputs") / "manual_tree"
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Create tree manager and executor
@@ -429,9 +429,10 @@ def main():
         tree_manager.update_node_execution(node.id, NodeState.RUNNING)
         
         # Execute node
-        state, result = node_executor.execute_node(
+        state, output_path = node_executor.execute_node(
             node=node,
-            input_data_path=current_data_path,
+            tree=tree,
+            input_path=current_data_path,
             output_base_dir=output_dir
         )
         
@@ -440,26 +441,32 @@ def main():
             tree_manager.update_node_execution(
                 node.id,
                 state=state,
-                output_data_id=result.output_data_path,
-                figures=result.figures,
-                logs=[result.logs] if result.logs else [],
-                duration=result.duration
+                output_data_id=output_path
             )
             
-            if result.output_data_path:
-                current_data_path = Path(result.output_data_path)
+            if output_path:
+                # For next node, use the output data file
+                output_data_file = Path(output_path) / "output_data.h5ad"
+                if output_data_file.exists():
+                    current_data_path = output_data_file
+                else:
+                    current_data_path = Path(output_path)
                 
-            print(f"✓ Completed in {result.duration:.1f}s")
-            if result.figures:
-                print(f"  Generated {len(result.figures)} figures")
+            print(f"✓ Completed")
+            # Check for figures in the outputs directory
+            if output_path:
+                figures_dir = Path(output_path) / "figures"
+                if figures_dir.exists():
+                    figures = list(figures_dir.glob("*.png"))
+                    if figures:
+                        print(f"  Generated {len(figures)} figures")
         else:
             tree_manager.update_node_execution(
                 node.id,
                 state=state,
-                error=result.error,
-                logs=[result.logs] if result.logs else []
+                error=f"Node execution failed with state: {state}"
             )
-            print(f"✗ Failed: {result.error}")
+            print(f"✗ Failed: Node execution failed")
             break
     
     # Save final tree state
