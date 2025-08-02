@@ -15,7 +15,7 @@ class Config(BaseModel):
     
     # OpenAI settings
     openai_api_key: str = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
-    openai_model: str = Field(default="gpt-4o-2024-08-06")
+    openai_model: str = Field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
     
     # Execution settings
     max_nodes: int = Field(default=20)

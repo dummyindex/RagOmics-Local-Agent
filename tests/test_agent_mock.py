@@ -187,8 +187,8 @@ def main():
     
     # Setup paths
     input_data = Path("/Users/random/Ragomics-workspace-all/data/zebrafish.h5ad")
-    output_dir = Path("test_agent_mock_output")
-    output_dir.mkdir(exist_ok=True)
+    output_dir = Path("test_outputs") / "agent_mock"
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     if not input_data.exists():
         print(f"Error: Input data not found at {input_data}")

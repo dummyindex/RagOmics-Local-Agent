@@ -1,3 +1,8 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -152,6 +157,7 @@ tests/test_agent_output/
 tests/test_agent_mock_output/
 test_outputs/
 test_output_*/
+test_data/
 *.h5ad
 !data/*.h5ad
 dummy.h5ad

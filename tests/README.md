@@ -1,6 +1,6 @@
-# Ragomics Agent Local Tests
+# Test Suite for Ragomics Agent Local
 
-This directory contains all tests for the Ragomics Agent Local system.
+This directory contains all tests for the ragomics_agent_local project.
 
 ## Test Files
 

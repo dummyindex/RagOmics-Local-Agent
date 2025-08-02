@@ -7,17 +7,34 @@ from .base_agent import BaseAgent
 from .task_manager import TaskType, TaskStatus
 from ..models import NewFunctionBlock, FunctionBlockType
 from ..llm_service import OpenAIService
-from ..llm_service.prompt_builder import PromptBuilder
 
 
 class BugFixerAgent(BaseAgent):
     """Agent that debugs and fixes failed function blocks."""
     
+    SYSTEM_PROMPT = """You are an expert debugger for bioinformatics function blocks.
+
+Your task is to fix errors in function blocks that process AnnData objects.
+
+You have deep knowledge of:
+- scanpy and anndata APIs
+- Common Python/R errors and their fixes
+- Single-cell analysis workflows
+- Data structure requirements
+
+When fixing code:
+1. Analyze the error message and traceback carefully
+2. Identify the root cause
+3. Apply the minimal fix needed
+4. Ensure the function signature remains: def run(adata, **parameters)
+5. Add any missing imports
+6. Handle edge cases properly"""
+    
     def __init__(self, llm_service: Optional[OpenAIService] = None, task_manager=None):
         super().__init__("bug_fixer", task_manager)
         self.llm_service = llm_service
-        self.prompt_builder = PromptBuilder() if llm_service else None
         self.common_fixes = self._load_common_fixes()
+        self.max_error_lines = 1000  # Maximum lines of error output to include
         
     def process(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Fix a failed function block.
@@ -109,7 +126,7 @@ class BugFixerAgent(BaseAgent):
             return result
         
         # If common fixes don't work and we have LLM service, use it
-        if self.llm_service and self.prompt_builder:
+        if self.llm_service:
             fixed_code = self._debug_with_llm(
                 function_block=function_block,
                 error_message=error_message,
@@ -164,20 +181,23 @@ class BugFixerAgent(BaseAgent):
         """Use LLM to debug the function block."""
         language = "python" if function_block.type == FunctionBlockType.PYTHON else "r"
         
-        # Prepare full error message
-        full_error = f"{error_message}\n\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}"
+        # Truncate long outputs
+        stdout_lines = stdout.split('\n')[-self.max_error_lines:] if stdout else []
+        stderr_lines = stderr.split('\n')[-self.max_error_lines:] if stderr else []
         
         # Build debug prompt
-        prompt = self.prompt_builder.build_debug_prompt(
-            function_block_code=function_block.code,
-            error_message=full_error,
+        prompt = self._build_debug_prompt(
+            function_block=function_block,
+            error_message=error_message,
+            stdout_lines=stdout_lines,
+            stderr_lines=stderr_lines,
             previous_attempts=previous_attempts
         )
         
         try:
             # Call LLM service
             messages = [
-                {"role": "system", "content": self.prompt_builder.SYSTEM_PROMPT},
+                {"role": "system", "content": self.SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
             ]
             
@@ -207,6 +227,62 @@ class BugFixerAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"Error debugging with LLM: {e}")
             return None
+    
+    def _build_debug_prompt(
+        self,
+        function_block: NewFunctionBlock,
+        error_message: str,
+        stdout_lines: List[str],
+        stderr_lines: List[str],
+        previous_attempts: List[str]
+    ) -> str:
+        """Build a debug prompt for the LLM."""
+        prompt_parts = []
+        
+        prompt_parts.append("## Function Block to Debug")
+        prompt_parts.append(f"Name: {function_block.name}")
+        prompt_parts.append(f"Description: {function_block.description}")
+        prompt_parts.append("")
+        prompt_parts.append("## Original Code")
+        prompt_parts.append("```python")
+        prompt_parts.append(function_block.code)
+        prompt_parts.append("```")
+        prompt_parts.append("")
+        
+        prompt_parts.append("## Error Information")
+        prompt_parts.append(f"Error Message: {error_message}")
+        prompt_parts.append("")
+        
+        if stderr_lines:
+            prompt_parts.append("## Standard Error Output (last {} lines)".format(len(stderr_lines)))
+            prompt_parts.append("```")
+            prompt_parts.extend(stderr_lines)
+            prompt_parts.append("```")
+            prompt_parts.append("")
+        
+        if stdout_lines:
+            prompt_parts.append("## Standard Output (last {} lines)".format(len(stdout_lines)))
+            prompt_parts.append("```")
+            prompt_parts.extend(stdout_lines)
+            prompt_parts.append("```")
+            prompt_parts.append("")
+        
+        if previous_attempts:
+            prompt_parts.append("## Previous Fix Attempts")
+            for i, attempt in enumerate(previous_attempts, 1):
+                prompt_parts.append(f"{i}. {attempt}")
+            prompt_parts.append("")
+        
+        prompt_parts.append("## Task")
+        prompt_parts.append("Fix the code above to resolve the error. Return the complete fixed code.")
+        prompt_parts.append("")
+        prompt_parts.append("Requirements:")
+        prompt_parts.append("1. The function MUST be named 'run' with signature: def run(adata, **parameters)")
+        prompt_parts.append("2. Include all necessary imports")
+        prompt_parts.append("3. Handle the specific error shown above")
+        prompt_parts.append("4. Maintain the original functionality")
+        
+        return "\n".join(prompt_parts)
     
     def _load_common_fixes(self) -> List[Dict[str, Any]]:
         """Load common error patterns and their fixes."""
