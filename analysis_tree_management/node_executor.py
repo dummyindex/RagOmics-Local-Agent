@@ -41,7 +41,7 @@ class NodeExecutor:
         logger.info(f"Executing node {node.id}: {node.function_block.name}")
         
         # Create directory structure following new specification
-        tree_dir = output_base_dir / f"tree_{tree.id}"
+        tree_dir = output_base_dir / tree.id
         nodes_dir = tree_dir / "nodes"
         node_dir = nodes_dir / f"node_{node.id}"
         node_dir.mkdir(parents=True, exist_ok=True)
@@ -91,17 +91,31 @@ class NodeExecutor:
         job_logs_dir.mkdir(exist_ok=True)
         
         try:
+            # Determine the actual input path for this node
+            actual_input_path = Path(input_path)
+            
+            # If this node has a parent, use the parent's outputs directory
+            if node.parent_id:
+                parent_node = tree.nodes.get(node.parent_id)
+                if parent_node and parent_node.output_data_id:
+                    # Use parent's outputs directory (which contains ALL output files)
+                    parent_outputs = Path(parent_node.output_data_id)
+                    if parent_outputs.exists():
+                        actual_input_path = parent_outputs
+                    else:
+                        logger.warning(f"Parent outputs directory not found: {parent_outputs}")
+            
             # Build execution context if using enhanced executor
             if hasattr(self, '_build_execution_context'):
-                context = self._build_execution_context(node, tree, input_path, output_base_dir)
+                context = self._build_execution_context(node, tree, actual_input_path, output_base_dir)
             else:
                 context = None
             
             # Use ExecutorManager to execute the function block
-            # The ExecutorManager handles the execution and returns ExecutionResult
+            # Pass the directory containing ALL parent outputs (or initial input file)
             result = self.executor_manager.execute(
                 function_block=node.function_block,
-                input_data_path=Path(input_path),
+                input_data_path=actual_input_path,
                 output_dir=job_output_dir,
                 parameters=node.function_block.parameters
             )
@@ -417,7 +431,7 @@ class NodeExecutor:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         job_id = f"job_{timestamp}_{node.id[:8]}"
         
-        tree_dir = output_base_dir / f"tree_{tree.id}"
+        tree_dir = output_base_dir / tree.id
         node_dir = tree_dir / "nodes" / f"node_{node.id}"
         job_dir = node_dir / "jobs" / job_id
         

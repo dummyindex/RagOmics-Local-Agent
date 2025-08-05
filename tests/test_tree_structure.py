@@ -22,9 +22,17 @@ logger = setup_logger(__name__)
 def create_simple_block():
     """Create a simple test function block."""
     code = '''
-def run(adata, **parameters):
+def run(path_dict, params):
     """Simple test function."""
     import scanpy as sc
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print(f"Processing data with shape: {adata.shape}")
     
     # Simple operation

@@ -31,12 +31,21 @@ def create_test_function_block():
     )
     
     code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Test function that modifies AnnData."""
     import scanpy as sc
     import numpy as np
+    import os
     from datetime import datetime
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Starting test function...")
     print(f"Input shape: {adata.shape}")
     
@@ -57,6 +66,10 @@ def run(adata, **kwargs):
     print(f"Modified shape: {adata.shape}")
     print("Test function completed!")
     
+    # Save output
+    output_path = os.path.join(path_dict["output_dir"], "_node_anndata.h5ad")
+    adata.write(output_path)
+    
     return adata
 '''
     
@@ -71,7 +84,7 @@ def run(adata, **kwargs):
     )
 
 
-def test_job_history(input_data_path):
+def test_job_history():
     """Test job history tracking."""
     print("\n=== Testing Job History Tracking ===")
     
@@ -79,6 +92,20 @@ def test_job_history(input_data_path):
     with tempfile.TemporaryDirectory() as temp_dir:
         output_dir = Path(temp_dir) / "test_output"
         output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create test data
+        import numpy as np
+        try:
+            import scanpy as sc
+            adata = sc.AnnData(np.random.randn(100, 50))
+            input_file = Path(temp_dir) / "test_data.h5ad"
+            adata.write(input_file)
+        except ImportError:
+            # Fallback if scanpy not available
+            import pandas as pd
+            df = pd.DataFrame(np.random.randn(100, 50))
+            input_file = Path(temp_dir) / "test_data.csv"
+            df.to_csv(input_file, index=False)
         
         # Create executor
         executor_manager = ExecutorManager()
@@ -90,7 +117,7 @@ def test_job_history(input_data_path):
         print("\nExecuting function block...")
         result = executor_manager.execute(
             function_block=function_block,
-            input_data_path=Path(input_data_path),
+            input_data_path=input_file,
             output_dir=output_dir,
             parameters={}
         )
@@ -171,91 +198,102 @@ def test_job_history(input_data_path):
         print("\n✓ All job history tests passed!")
 
 
-def test_output_data_modification(input_data_path):
-    """Test that output_data.h5ad is actually modified."""
+def test_output_data_modification():
+    """Test that _node_anndata.h5ad is actually modified."""
     print("\n=== Testing Output Data Modification ===")
     
-    import anndata
     import numpy as np
     
-    # Load original data
-    original_adata = anndata.read_h5ad(input_data_path)
-    original_shape = original_adata.shape
-    original_obs_columns = set(original_adata.obs.columns)
-    original_uns_keys = set(original_adata.uns.keys())
-    
-    print(f"Original data shape: {original_shape}")
-    print(f"Original obs columns: {original_obs_columns}")
-    print(f"Original uns keys: {original_uns_keys}")
-    
-    # Create temporary output directory
+    # Create test data first
     with tempfile.TemporaryDirectory() as temp_dir:
-        output_dir = Path(temp_dir) / "test_output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create executor
-        executor_manager = ExecutorManager()
-        
-        # Create test function block
-        function_block = create_test_function_block()
-        
-        # Execute the function block
-        print("\nExecuting function block...")
-        result = executor_manager.execute(
-            function_block=function_block,
-            input_data_path=Path(input_data_path),
-            output_dir=output_dir,
-            parameters={}
-        )
-        
-        # Check execution result
-        assert result.success, f"Execution failed: {result.error}"
-        assert result.output_data_path is not None, "No output data path"
-        
-        # Load modified data
-        output_path = Path(result.output_data_path)
-        assert output_path.exists(), f"Output file not found: {output_path}"
-        
-        modified_adata = anndata.read_h5ad(output_path)
-        modified_obs_columns = set(modified_adata.obs.columns)
-        modified_uns_keys = set(modified_adata.uns.keys())
-        
-        print(f"\nModified data shape: {modified_adata.shape}")
-        print(f"Modified obs columns: {modified_obs_columns}")
-        print(f"Modified uns keys: {modified_uns_keys}")
-        
-        # Verify modifications
-        assert modified_adata.shape == original_shape, "Data shape should not change"
-        
-        # Check new column was added
-        new_columns = modified_obs_columns - original_obs_columns
-        assert 'test_column' in new_columns, "test_column not added to obs"
-        print("✓ New column 'test_column' added to obs")
-        
-        # Check column has valid data
-        assert len(modified_adata.obs['test_column']) == modified_adata.n_obs
-        assert np.all(modified_adata.obs['test_column'] >= 0)
-        assert np.all(modified_adata.obs['test_column'] <= 1)
-        print("✓ test_column contains valid random values")
-        
-        # Check new metadata was added
-        new_uns_keys = modified_uns_keys - original_uns_keys
-        assert 'test_metadata' in new_uns_keys, "test_metadata not added to uns"
-        print("✓ New metadata 'test_metadata' added to uns")
-        
-        # Check metadata content
-        test_metadata = modified_adata.uns['test_metadata']
-        assert test_metadata['processed'] is True
-        assert 'timestamp' in test_metadata
-        assert 'random_value' in test_metadata
-        assert 0 <= test_metadata['random_value'] <= 1
-        print("✓ test_metadata contains expected fields")
-        
-        # Verify data is actually different
-        assert output_path != input_data_path, "Output should be a different file"
-        print("✓ Output is saved to a new file")
-        
-        print("\n✓ All output data modification tests passed!")
+        try:
+            import scanpy as sc
+            import anndata
+            adata = sc.AnnData(np.random.randn(100, 50))
+            input_file = Path(temp_dir) / "test_data.h5ad"
+            adata.write(input_file)
+            
+            # Load original data
+            original_adata = anndata.read_h5ad(input_file)
+            original_shape = original_adata.shape
+            original_obs_columns = set(original_adata.obs.columns)
+            original_uns_keys = set(original_adata.uns.keys())
+            
+            print(f"Original data shape: {original_shape}")
+            print(f"Original obs columns: {original_obs_columns}")
+            print(f"Original uns keys: {original_uns_keys}")
+            
+            # Create output directory
+            output_dir = Path(temp_dir) / "test_output"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create executor
+            executor_manager = ExecutorManager()
+            
+            # Create test function block
+            function_block = create_test_function_block()
+            
+            # Execute the function block
+            print("\nExecuting function block...")
+            result = executor_manager.execute(
+                function_block=function_block,
+                input_data_path=input_file,
+                output_dir=output_dir,
+                parameters={}
+            )
+            
+            # Check execution result
+            assert result.success, f"Execution failed: {result.error}"
+            assert result.output_data_path is not None, "No output data path"
+            
+            # Load modified data
+            output_path = Path(result.output_data_path)
+            assert output_path.exists(), f"Output file not found: {output_path}"
+            
+            modified_adata = anndata.read_h5ad(output_path)
+            modified_obs_columns = set(modified_adata.obs.columns)
+            modified_uns_keys = set(modified_adata.uns.keys())
+            
+            print(f"\nModified data shape: {modified_adata.shape}")
+            print(f"Modified obs columns: {modified_obs_columns}")
+            print(f"Modified uns keys: {modified_uns_keys}")
+            
+            # Verify modifications
+            assert modified_adata.shape == original_shape, "Data shape should not change"
+            
+            # Check new column was added
+            new_columns = modified_obs_columns - original_obs_columns
+            assert 'test_column' in new_columns, "test_column not added to obs"
+            print("✓ New column 'test_column' added to obs")
+            
+            # Check column has valid data
+            assert len(modified_adata.obs['test_column']) == modified_adata.n_obs
+            assert np.all(modified_adata.obs['test_column'] >= 0)
+            assert np.all(modified_adata.obs['test_column'] <= 1)
+            print("✓ test_column contains valid random values")
+            
+            # Check new metadata was added
+            new_uns_keys = modified_uns_keys - original_uns_keys
+            assert 'test_metadata' in new_uns_keys, "test_metadata not added to uns"
+            print("✓ New metadata 'test_metadata' added to uns")
+            
+            # Check metadata content
+            test_metadata = modified_adata.uns['test_metadata']
+            assert test_metadata['processed'] is True
+            assert 'timestamp' in test_metadata
+            assert 'random_value' in test_metadata
+            assert 0 <= test_metadata['random_value'] <= 1
+            print("✓ test_metadata contains expected fields")
+            
+            # Verify data is actually different
+            assert output_path != input_file, "Output should be a different file"
+            print("✓ Output is saved to a new file")
+            
+            print("\n✓ All output data modification tests passed!")
+        except ImportError:
+            print("Skipping test - scanpy not available")
+            import pytest
+            pytest.skip("scanpy not available")
 
 
 def main():

@@ -33,11 +33,19 @@ def create_mock_llm_response():
         type=FunctionBlockType.PYTHON,
         description="Initial quality control and data exploration",
         code='''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Initial quality control."""
     import scanpy as sc
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print(f"Input data shape: {adata.shape}")
     
     # Basic QC metrics
@@ -88,11 +96,19 @@ def run(adata, **kwargs):
         type=FunctionBlockType.PYTHON,
         description="Data preprocessing and normalization",
         code='''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Preprocess and normalize data."""
     import scanpy as sc
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Starting preprocessing...")
     
     # Store raw counts
@@ -140,11 +156,19 @@ def run(adata, **kwargs):
         type=FunctionBlockType.PYTHON,
         description="Prepare data for velocity analysis",
         code='''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Prepare data for velocity analysis."""
     import scanpy as sc
     import numpy as np
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Preparing for velocity analysis...")
     
     # Compute neighborhood graph

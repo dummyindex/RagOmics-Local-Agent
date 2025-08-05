@@ -21,7 +21,7 @@ def test_python_only_validation():
         name="test_python",
         type=FunctionBlockType.PYTHON,
         description="Test Python block",
-        code='def run(adata, **kwargs):\n    print("Hello from Python")\n    return adata',
+        code='def run(path_dict, params):\n    print("Hello from Python")\n    return None',
         requirements="numpy",
         parameters={},
         static_config=StaticConfig(args=[], description="Test", tag="test", source="test")
@@ -33,8 +33,6 @@ def test_python_only_validation():
     print(f"Docker available: {validation['docker_available']}")
     print(f"Python image ({validation['image_name']}): {'✓' if validation['required_image'] else '✗'}")
     print("Note: R image validation was NOT performed")
-    
-    return validation
 
 
 def test_r_only_validation():
@@ -61,8 +59,6 @@ def test_r_only_validation():
     print(f"Docker available: {validation['docker_available']}")
     print(f"R image ({validation['image_name']}): {'✓' if validation['required_image'] else '✗'}")
     print("Note: Python image validation was NOT performed")
-    
-    return validation
 
 
 def main():

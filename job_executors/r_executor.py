@@ -37,8 +37,32 @@ class RExecutor(BaseExecutor):
         (execution_dir / "output").mkdir(exist_ok=True)
         (execution_dir / "output" / "figures").mkdir(exist_ok=True)
         
-        # Copy input data
-        shutil.copy2(input_data_path, execution_dir / "input" / "data.h5ad")
+        # Copy ALL files from parent's outputs folder to child's input folder
+        input_path = Path(input_data_path)
+        if input_path.is_dir():
+            # If input_data_path is a directory (parent's outputs folder), copy ALL files
+            for item in input_path.glob("*"):
+                if item.is_file():
+                    # Copy with original name to maintain consistency
+                    shutil.copy2(item, execution_dir / "input" / item.name)
+                elif item.is_dir():
+                    # Copy entire subdirectory (e.g., figures/)
+                    shutil.copytree(item, execution_dir / "input" / item.name, dirs_exist_ok=True)
+        else:
+            # If it's a single file (e.g., initial input), handle appropriately
+            if input_path.name == "_node_seuratObject.rds":
+                shutil.copy2(input_path, execution_dir / "input" / "_node_seuratObject.rds")
+            elif input_path.name == "_node_anndata.h5ad":
+                # Coming from Python parent
+                shutil.copy2(input_path, execution_dir / "input" / "_node_anndata.h5ad")
+            else:
+                # For initial input or legacy files, copy with original name
+                shutil.copy2(input_path, execution_dir / "input" / input_path.name)
+                # Also copy as standard name if it's an h5ad or rds file
+                if input_path.suffix == ".h5ad":
+                    shutil.copy2(input_path, execution_dir / "input" / "_node_anndata.h5ad")
+                elif input_path.suffix == ".rds":
+                    shutil.copy2(input_path, execution_dir / "input" / "_node_seuratObject.rds")
         
         # Write parameters as JSON
         self.write_parameters(execution_dir / "parameters.json", parameters)
@@ -112,7 +136,6 @@ cat("Package installation completed\\n")
         return '''#!/usr/bin/env Rscript
 # Wrapper script for function block execution
 
-library(anndata)
 library(jsonlite)
 
 # Set up logging
@@ -128,37 +151,43 @@ tryCatch({
     cat("Loaded parameters:\\n")
     print(params)
     
-    # Load input data
-    cat("\\nLoading input data\\n")
-    adata <- read_h5ad("/workspace/input/data.h5ad")
-    cat(sprintf("Loaded data with dimensions: %d obs x %d vars\\n", 
-                nrow(adata$obs), nrow(adata$var)))
+    # Create path list with only directories
+    path_dict <- list(
+        input_dir = "/workspace/input",
+        output_dir = "/workspace/output"
+    )
+    
+    cat("\\nPath dictionary:\\n")
+    print(path_dict)
+    cat("\\nParameters:\\n")
+    print(params)
     
     # Source function block
     cat("\\nLoading function block\\n")
     source("/workspace/function_block.R")
     
-    # Execute function block
-    cat("\\nExecuting function block\\n")
-    result <- do.call(run, c(list(adata = adata), params))
+    # Execute function block with path_dict and params
+    cat("\\nExecuting function block with path_dict and params\\n")
+    run(path_dict, params)  # Pass both path_dict and params
     
-    # Handle results
-    if (inherits(result, "AnnData")) {
-        # Save the result AnnData
-        cat("\\nSaving output data\\n")
-        write_h5ad(result, "/workspace/output/output_data.h5ad")
-    } else if (is.list(result)) {
-        # Function block returned a list with multiple outputs
-        if (!is.null(result$adata)) {
-            cat("\\nSaving output data from result list\\n")
-            write_h5ad(result$adata, "/workspace/output/output_data.h5ad")
-        }
-        
-        # Save any additional metadata
-        metadata <- result[names(result) != "adata"]
-        if (length(metadata) > 0) {
-            write(toJSON(metadata, auto_unbox = TRUE, pretty = TRUE), 
-                  "/workspace/output/metadata.json")
+    # Verify standard outputs were created (for Seurat/anndata workflows)
+    output_r <- file.path(path_dict$output_dir, "_node_seuratObject.rds")
+    output_py <- file.path(path_dict$output_dir, "_node_anndata.h5ad")
+    
+    if (file.exists(output_r)) {
+        cat(sprintf("\\nStandard R output file _node_seuratObject.rds created successfully\\n"))
+    } else if (file.exists(output_py)) {
+        cat(sprintf("\\nStandard Python output file _node_anndata.h5ad created\\n"))
+    } else {
+        # Check for any output files
+        all_files <- list.files(path_dict$output_dir, full.names = FALSE)
+        if (length(all_files) > 0) {
+            cat(sprintf("\\nFound %d output files:\\n", length(all_files)))
+            for (f in head(all_files, 5)) {  # Show first 5
+                cat(sprintf("  - %s\\n", f))
+            }
+        } else {
+            cat(sprintf("\\nWarning: No output files found in %s\\n", path_dict$output_dir))
         }
     }
     

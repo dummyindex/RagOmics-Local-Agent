@@ -121,12 +121,20 @@ class MockFunctionSelector(FunctionSelectorAgent):
         )
         
         code = '''
-def run(adata, min_genes=200, max_pct_mito=20.0, **kwargs):
+def run(path_dict, params):
     """Perform quality control."""
     import scanpy as sc
     import pandas as pd
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print(f"Initial data shape: {adata.shape}")
     
     # Calculate QC metrics
@@ -183,12 +191,20 @@ def run(adata, min_genes=200, max_pct_mito=20.0, **kwargs):
         )
         
         code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Preprocess data for velocity analysis."""
     import scanpy as sc
     import scvelo as scv
     import numpy as np
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Preprocessing for velocity analysis...")
     
     # Store raw counts for velocity
@@ -248,10 +264,18 @@ def run(adata, **kwargs):
         )
         
         code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Prepare data for velocity computation."""
     import scvelo as scv
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Preparing for velocity analysis...")
     
     # Filter and normalize for velocity
@@ -288,11 +312,19 @@ def run(adata, **kwargs):
         )
         
         code = '''
-def run(adata, root_cluster=None, **kwargs):
+def run(path_dict, params):
     """Calculate diffusion pseudotime."""
     import scanpy as sc
     import numpy as np
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Calculating pseudotime...")
     
     # Diffusion map
@@ -340,11 +372,19 @@ def run(adata, root_cluster=None, **kwargs):
         )
         
         code = '''
-def run(adata, mode="dynamical", **kwargs):
+def run(path_dict, params):
     """Run scVelo RNA velocity analysis."""
     import scvelo as scv
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print(f"Running scVelo in {mode} mode...")
     
     # Recover dynamics if using dynamical mode
@@ -398,11 +438,19 @@ def run(adata, mode="dynamical", **kwargs):
         )
         
         code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Generate velocity visualizations."""
     import scvelo as scv
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Generating velocity plots...")
     
     # Velocity embedding plots
@@ -465,13 +513,21 @@ def run(adata, **kwargs):
         )
         
         code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Generate analysis summary plots."""
     import scanpy as sc
     import scvelo as scv
     import matplotlib.pyplot as plt
     import pandas as pd
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Generating analysis plots...")
     
     # Summary plot with multiple panels

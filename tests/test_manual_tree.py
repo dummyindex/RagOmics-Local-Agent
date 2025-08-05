@@ -53,12 +53,35 @@ def create_quality_control_block():
     )
     
     code = '''
-def run(adata, min_genes=200, max_genes=5000, max_pct_mito=20.0, **kwargs):
+def run(path_dict, params):
     """Perform quality control on single-cell data."""
     import scanpy as sc
     import pandas as pd
     import matplotlib.pyplot as plt
     import seaborn as sns
+    import os
+    
+    # Ensure output directories exist
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
+    os.makedirs('/workspace/output', exist_ok=True)
+    os.makedirs('/workspace/output/figures', exist_ok=True)
+    
+    # Load data if not provided (FRAMEWORK CONVENTION)
+    if adata is None:
+        input_path = '/workspace/input/_node_anndata.h5ad'
+        if os.path.exists(input_path):
+            print(f"Loading data from {input_path}")
+            adata = sc.read_h5ad(input_path)
+        else:
+            # Fallback for initial node
+            raise FileNotFoundError("No input data found")
     
     print(f"Initial data shape: {adata.shape}")
     
@@ -117,6 +140,11 @@ def run(adata, min_genes=200, max_genes=5000, max_pct_mito=20.0, **kwargs):
     plt.savefig('/workspace/output/figures/qc_summary.png', dpi=150, bbox_inches='tight')
     plt.close()
     
+    # Save processed data (FRAMEWORK CONVENTION)
+    output_path = '/workspace/output/_node_anndata.h5ad'
+    print(f"Saving processed data to {output_path}")
+    adata.write(output_path)
+    
     return adata
 '''
     
@@ -153,11 +181,28 @@ def create_normalization_block():
     )
     
     code = '''
-def run(adata, target_sum=10000.0, **kwargs):
+def run(path_dict, params):
     """Normalize and log-transform single-cell data."""
     import scanpy as sc
     import numpy as np
     import matplotlib.pyplot as plt
+    import os
+    
+    # Ensure output directories exist
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
+    os.makedirs('/workspace/output', exist_ok=True)
+    os.makedirs('/workspace/output/figures', exist_ok=True)
+    
+    # Load data if not provided (FRAMEWORK CONVENTION)
+    if adata is None:
+        adata = sc.read_h5ad('/workspace/input/_node_anndata.h5ad')
     
     print(f"Normalizing data with target_sum={target_sum}")
     
@@ -187,6 +232,11 @@ def run(adata, target_sum=10000.0, **kwargs):
     # Store the full data in raw if not already there
     if not hasattr(adata, 'raw') or adata.raw is None:
         adata.raw = adata
+    
+    # Save processed data (FRAMEWORK CONVENTION)
+    output_path = '/workspace/output/_node_anndata.h5ad'
+    print(f"Saving processed data to {output_path}")
+    adata.write(output_path)
     
     return adata
 '''
@@ -227,13 +277,30 @@ def create_velocity_analysis_block():
     )
     
     code = '''
-def run(adata, n_pcs=30, n_neighbors=30, **kwargs):
+def run(path_dict, params):
     """Perform RNA velocity analysis."""
     import scanpy as sc
     import scvelo as scv
     import numpy as np
     import pandas as pd
     import matplotlib.pyplot as plt
+    import os
+    
+    # Ensure output directories exist
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
+    os.makedirs('/workspace/output', exist_ok=True)
+    os.makedirs('/workspace/output/figures', exist_ok=True)
+    
+    # Load data if not provided (FRAMEWORK CONVENTION)
+    if adata is None:
+        adata = sc.read_h5ad('/workspace/input/_node_anndata.h5ad')
     
     scv.settings.verbosity = 3
     scv.settings.presenter_view = True
@@ -334,6 +401,16 @@ def run(adata, n_pcs=30, n_neighbors=30, **kwargs):
     
     print(f"Velocity analysis completed")
     print(f"Mean velocity confidence: {summary['mean_velocity_confidence']:.3f}")
+    
+    # Save processed data (FRAMEWORK CONVENTION)
+    output_path = '/workspace/output/_node_anndata.h5ad'
+    print(f"Saving processed data to {output_path}")
+    adata.write(output_path)
+    
+    # Also save summary
+    import json
+    with open('/workspace/output/velocity_summary.json', 'w') as f:
+        json.dump(summary, f, indent=2)
     
     return {"adata": adata, "summary": summary}
 '''
@@ -446,7 +523,7 @@ def main():
             
             if output_path:
                 # For next node, use the output data file
-                output_data_file = Path(output_path) / "output_data.h5ad"
+                output_data_file = Path(output_path) / "_node_anndata.h5ad"
                 if output_data_file.exists():
                     current_data_path = output_data_file
                 else:

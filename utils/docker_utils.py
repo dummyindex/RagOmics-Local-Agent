@@ -16,7 +16,8 @@ class DockerManager:
     
     def __init__(self):
         try:
-            self.client = docker.from_env()
+            # Initialize Docker client with longer timeout for API calls
+            self.client = docker.from_env(timeout=3600)  # 1 hour timeout for API calls
             self.client.ping()
             logger.info("Docker client initialized successfully")
         except docker.errors.DockerException as e:
@@ -115,9 +116,13 @@ class DockerManager:
             return -1, "", f"Image not found: {image}"
         except docker.errors.APIError as e:
             logger.error(f"Docker API error: {e}")
+            if "Read timed out" in str(e):
+                logger.error(f"Docker API timeout - container may still be running. Consider increasing timeout (current: {timeout}s)")
             return -1, "", str(e)
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
+            if "Read timed out" in str(e):
+                logger.error(f"Docker communication timeout - container may still be running")
             return -1, "", str(e)
         finally:
             # Clean up container

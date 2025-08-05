@@ -62,11 +62,19 @@ class SimpleScVeloPipeline:
         )
         
         code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Quality control."""
     import scanpy as sc
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print(f"QC: Input shape {adata.shape}")
     
     # Basic filtering
@@ -113,11 +121,19 @@ def run(adata, **kwargs):
         )
         
         code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Preprocess data."""
     import scanpy as sc
     import numpy as np
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Preprocessing data...")
     
     # Normalize and log
@@ -169,10 +185,18 @@ def run(adata, **kwargs):
         )
         
         code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Run velocity analysis."""
     import scvelo as scv
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Running velocity analysis...")
     
     # Velocity preprocessing
@@ -212,12 +236,20 @@ def run(adata, **kwargs):
         )
         
         code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Generate plots."""
     import scanpy as sc
     import scvelo as scv
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Generating plots...")
     
     # UMAP plots

@@ -35,8 +35,9 @@ def create_test_function_block():
     """Create a test function block that generates various outputs."""
     # This code follows the standard PythonExecutor wrapper format
     code = '''
-def run(adata, **parameters):
+def run(path_dict, params):
     """Test function block that generates multiple outputs."""
+    import os
     import json
     import numpy as np
     import matplotlib.pyplot as plt
@@ -44,9 +45,17 @@ def run(adata, **parameters):
     import scanpy as sc
     from datetime import datetime
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Starting test function block execution...")
     print(f"Input adata shape: {adata.shape}")
-    print(f"Parameters: {parameters}")
+    print(f"Parameters: {params}")
     
     # Generate some additional test data
     data = np.random.randn(100, 50)
@@ -57,7 +66,6 @@ def run(adata, **parameters):
     test_adata.var_names = [f"gene_{i}" for i in range(data.shape[1])]
     
     # Create figures directory
-    import os
     os.makedirs("/workspace/output/figures", exist_ok=True)
     
     # Generate figure 1: Histogram
@@ -102,7 +110,7 @@ def run(adata, **parameters):
         "timestamp": str(datetime.now()),
         "data_shape": list(test_adata.shape),
         "figures_generated": ["histogram.png", "heatmap.png", "lineplot.png"],
-        "parameters_used": parameters
+        "parameters_used": params
     }
     
     # Save metadata

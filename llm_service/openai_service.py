@@ -41,7 +41,10 @@ class OpenAIService:
                 kwargs["response_format"] = response_format
                 
             response = self.client.chat.completions.create(**kwargs)
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            logger.debug(f"Raw response content type: {type(content)}")
+            logger.debug(f"Raw response content (first 500 chars): {content[:500] if content else 'None'}")
+            return content
             
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
@@ -68,7 +71,10 @@ class OpenAIService:
         )
         
         try:
-            return json.loads(content)
+            logger.debug(f"Attempting to parse JSON content: {content[:500]}...")
+            parsed = json.loads(content)
+            logger.debug(f"Successfully parsed JSON, type: {type(parsed)}")
+            return parsed
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}")
             logger.error(f"Response content: {content}")

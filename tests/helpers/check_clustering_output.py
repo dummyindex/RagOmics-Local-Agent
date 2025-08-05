@@ -5,7 +5,7 @@ import scanpy as sc
 from pathlib import Path
 
 # Load output data
-output_path = Path("/Users/random/Ragomics-workspace-all/agent_cc/ragomics_agent_local/test_outputs/clustering_final_20250802_004825/7326eff9-c835-49ee-9e9f-3f16bba41357/f16356d2-e0f4-40be-ac3e-f5180e9e4f50/output/output_data.h5ad")
+output_path = Path("/Users/random/Ragomics-workspace-all/agent_cc/ragomics_agent_local/test_outputs/clustering_final_20250802_004825/7326eff9-c835-49ee-9e9f-3f16bba41357/f16356d2-e0f4-40be-ac3e-f5180e9e4f50/output/_node_anndata.h5ad")
 
 if output_path.exists():
     adata = sc.read_h5ad(output_path)

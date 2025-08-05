@@ -1,0 +1,21 @@
+{
+  "name": "quality_control",
+  "type": "python",
+  "description": "Quality control and filtering",
+  "parameters": {
+    "min_genes": 200
+  },
+  "static_config": {
+    "description": "Quality control",
+    "tag": "qc",
+    "args": [
+      {
+        "name": "min_genes",
+        "value_type": "int",
+        "description": "Min genes",
+        "optional": true,
+        "default_value": 200
+      }
+    ]
+  }
+}
