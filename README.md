@@ -98,18 +98,31 @@ Each analysis creates the following structure:
 
 ```
 output_dir/
-├── analysis_tree.json          # Complete tree structure
-└── tree_id/                    # Unique tree execution
-    └── node_id/                # Each analysis node
-        ├── output_data.h5ad    # Modified data
-        ├── figures/            # Generated plots
-        ├── past_jobs/          # Execution history
-        │   └── TIMESTAMP_STATUS_JOBID/
-        │       ├── stdout.txt
-        │       ├── stderr.txt
-        │       ├── job_metrics.csv
-        │       └── job_info.json
-        └── current_job -> past_jobs/latest/
+├── analysis_tree.json        # Tree definition
+└── {tree_id}/
+    ├── main_task/           # Orchestration logs
+    └── nodes/               # Flat node structure
+        └── node_{id}/
+            ├── node_info.json
+            ├── function_block/
+            │   ├── code.py      # Generated code
+            │   ├── config.json  # Block configuration
+            │   └── requirements.txt
+            ├── agent_tasks/     # Agent interaction logs
+            ├── jobs/            # Execution history
+            │   ├── job_{timestamp}_{id}/
+            │   │   ├── execution_summary.json
+            │   │   ├── input/
+            │   │   ├── output/
+            │   │   │   ├── _node_anndata.h5ad
+            │   │   │   └── figures/
+            │   │   └── logs/
+            │   │       ├── stdout.txt
+            │   │       └── stderr.txt
+            │   └── latest -> job_{timestamp}_{id}
+            └── outputs/         # Final node outputs
+                ├── _node_anndata.h5ad
+                └── figures/
 ```
 
 ## Configuration
@@ -122,7 +135,7 @@ Configuration options in `config.py`:
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.11+
 - Docker
 - OpenAI API key (for LLM features)
 
