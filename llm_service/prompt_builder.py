@@ -13,19 +13,59 @@ class PromptBuilder:
     SYSTEM_PROMPT = """You are an expert bioinformatics analyst specializing in single-cell RNA sequencing data analysis. 
 Your task is to generate or select function blocks that process AnnData objects to fulfill user requests.
 
+IMPORTANT: All function blocks MUST follow the Function Block Framework conventions:
+- See: agents/FUNCTION_BLOCK_FRAMEWORK.md for complete specifications
+
+Key Requirements:
+1. Python functions MUST use signature: def run(path_dict, params)
+2. Load data from: os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+3. Save data to: os.path.join(path_dict["output_dir"], "_node_anndata.h5ad")
+4. R functions MUST use: run <- function(path_dict, params)
+5. ALL files in parent's outputs/ folder automatically pass to child nodes' input/ folder
+6. Follow the standard template:
+   ```python
+   def run(path_dict, params):
+       import scanpy as sc
+       import os
+       
+       # Load data from input directory
+       input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+       adata = sc.read_h5ad(input_path)
+       
+       # Process data using params...
+       
+       # Save output with standard name
+       output_path = os.path.join(path_dict["output_dir"], "_node_anndata.h5ad")
+       adata.write(output_path)
+       
+       return adata
+   ```
+
 Each function block should:
 1. Have a clear, specific purpose
-2. Take an AnnData object as input and return an AnnData object (or dict with 'adata' key)
+2. Follow input/output conventions strictly
 3. Include all necessary imports and dependencies
 4. Be self-contained and executable
 5. Include appropriate error handling
-6. Save any generated figures to /workspace/output/figures/
+6. Save any generated figures to path_dict["output_dir"]/figures/
+7. Handle missing inputs gracefully
+
+IMPORTANT CONSIDERATIONS:
+- Always verify that API functions exist in the libraries you're using
+- Check the official documentation when implementing algorithms
+- Consider what libraries provide the functionality you need
+- For any algorithm, think about which library would implement it
+- Ensure proper import statements for all functions used
+- When working with large datasets, consider computational complexity and memory usage
+- Add progress messages using print statements to track long-running operations
+- For computationally expensive algorithms, consider if there are more efficient alternatives
+- Be aware that some clustering algorithms may scale poorly with dataset size
 
 You understand common single-cell analysis workflows including:
 - Quality control and filtering
 - Normalization and scaling
 - Dimensionality reduction (PCA, UMAP, t-SNE)
-- Clustering (Leiden, Louvain)
+- Clustering (various algorithms)
 - Differential expression analysis
 - Trajectory inference
 - Cell type annotation
@@ -93,54 +133,143 @@ You understand common single-cell analysis workflows including:
     
     @staticmethod
     def build_function_block_template(language: str = "python") -> str:
-        """Get function block code template."""
+        """Get function block code template following framework conventions."""
         
         if language == "python":
-            return '''def run(adata, **kwargs):
+            return '''def run(path_dict, params):
     """
     Function block description here.
     
     Parameters
     ----------
-    adata : anndata.AnnData
-        The input AnnData object
-    **kwargs : dict
-        Additional parameters
+    path_dict : dict
+        Dictionary containing 'input_dir' and 'output_dir' paths
+    params : dict
+        Parameters for the analysis
         
     Returns
     -------
-    anndata.AnnData or dict
-        The processed AnnData object or dict with 'adata' key
+    anndata.AnnData
+        The processed AnnData object
     """
     import scanpy as sc
     import pandas as pd
     import numpy as np
     import matplotlib.pyplot as plt
     import seaborn as sns
+    import os
     
-    # Set up plotting
-    plt.rcParams['figure.figsize'] = (8, 6)
-    plt.rcParams['figure.dpi'] = 100
+    # Ensure output directories exist
+    os.makedirs(path_dict["output_dir"], exist_ok=True)
+    figures_dir = os.path.join(path_dict["output_dir"], "figures")
+    os.makedirs(figures_dir, exist_ok=True)
     
-    # Your analysis code here
+    # Load data (FRAMEWORK CONVENTION)
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        # Try any .h5ad file if standard name not found
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith('.h5ad')]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+        else:
+            raise FileNotFoundError(f"No .h5ad files found in {path_dict['input_dir']}")
+    
+    print(f"Loading data from {input_path}")
+    adata = sc.read_h5ad(input_path)
+    
+    print(f"Input data shape: {adata.shape}")
+    
+    # ========================================
+    # YOUR ANALYSIS CODE HERE
+    # ========================================
+    
+    # Example: Basic filtering
+    # sc.pp.filter_cells(adata, min_genes=200)
+    # sc.pp.filter_genes(adata, min_cells=3)
+    
+    # ========================================
+    # SAVE OUTPUTS (FRAMEWORK CONVENTION)
+    # ========================================
+    
+    # Save processed data with standard name
+    output_path = os.path.join(path_dict["output_dir"], "_node_anndata.h5ad")
+    print(f"Saving processed data to {output_path}")
+    adata.write(output_path)
+    
+    # Save any figures
+    # plt.savefig(os.path.join(path_dict["output_dir"], "figures", "your_plot.png"), dpi=150, bbox_inches='tight')
+    
+    print(f"Output data shape: {adata.shape}")
     
     return adata
 '''
         else:  # R
-            return '''run <- function(adata, ...) {
+            return '''run <- function(path_dict, params) {
     #' Function block description here
     #' 
-    #' @param adata The input AnnData object
-    #' @param ... Additional parameters
-    #' @return The processed AnnData object or list with 'adata' element
+    #' @param path_dict List containing 'input_dir' and 'output_dir' paths
+    #' @param params List of parameters for the analysis
+    #' @return The processed Seurat object
     
     library(Seurat)
     library(ggplot2)
     library(dplyr)
     
-    # Your analysis code here
+    # Create output directories
+    dir.create(path_dict$output_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(path_dict$output_dir, "figures"), recursive = TRUE, showWarnings = FALSE)
     
-    return(adata)
+    # Load data (FRAMEWORK CONVENTION)
+    # Try standard R object name first
+    input_path <- file.path(path_dict$input_dir, "_node_seuratObject.rds")
+    if (file.exists(input_path)) {
+        cat(paste("Loading Seurat object from", input_path, "\\n"))
+        seurat_obj <- readRDS(input_path)
+    } else {
+        # Try any .rds file in input
+        rds_files <- list.files(path_dict$input_dir, pattern = "\\\\.rds$", full.names = TRUE)
+        if (length(rds_files) > 0) {
+            cat(paste("Loading Seurat object from", rds_files[1], "\\n"))
+            seurat_obj <- readRDS(rds_files[1])
+        } else {
+            # Try to load from h5ad if coming from Python parent
+            h5ad_files <- list.files(path_dict$input_dir, pattern = "\\\\.h5ad$", full.names = TRUE)
+            if (length(h5ad_files) > 0) {
+                library(anndata)
+                cat(paste("Loading from h5ad:", h5ad_files[1], "\\n"))
+                adata <- read_h5ad(h5ad_files[1])
+                seurat_obj <- CreateSeuratObject(counts = adata$X)
+            } else {
+                stop("No input data found (.rds or .h5ad)")
+            }
+        }
+    }
+    
+    cat(paste("Input data shape:", nrow(seurat_obj), "cells x", ncol(seurat_obj), "features\\n"))
+    
+    # ========================================
+    # YOUR ANALYSIS CODE HERE
+    # ========================================
+    
+    # Example: Basic Seurat processing
+    # seurat_obj <- NormalizeData(seurat_obj)
+    # seurat_obj <- FindVariableFeatures(seurat_obj)
+    
+    # ========================================
+    # SAVE OUTPUTS (FRAMEWORK CONVENTION)
+    # ========================================
+    
+    # Save Seurat object with standard name
+    output_path <- file.path(path_dict$output_dir, "_node_seuratObject.rds")
+    cat(paste("Saving Seurat object to", output_path, "\\n"))
+    saveRDS(seurat_obj, output_path)
+    
+    # Save any figures
+    # ggsave(file.path(path_dict$output_dir, "figures", "your_plot.png"), dpi = 150)
+    
+    cat(paste("Output data shape:", nrow(seurat_obj), "cells x", ncol(seurat_obj), "features\\n"))
+    
+    return(seurat_obj)
 }
 '''
     

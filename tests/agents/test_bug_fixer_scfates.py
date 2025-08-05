@@ -32,13 +32,21 @@ def create_buggy_scfates_block():
     # 2. Wrong attribute access patterns
     # 3. Missing preprocessing steps
     code = '''
-def run(adata, n_waypoints=150, **kwargs):
+def run(path_dict, params):
     """Run scFates trajectory inference."""
     import scanpy as sc
     import pandas as pd
     import numpy as np
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Running scFates trajectory inference...")
     
     # This will fail - scFates not imported
@@ -82,7 +90,7 @@ def create_fixed_scfates_block():
     )
     
     code = '''
-def run(adata, n_waypoints=150, n_jobs=4, **kwargs):
+def run(path_dict, params):
     """Run scFates trajectory inference."""
     import scanpy as sc
     import scFates as scf
@@ -90,6 +98,14 @@ def run(adata, n_waypoints=150, n_jobs=4, **kwargs):
     import numpy as np
     import matplotlib.pyplot as plt
     import warnings
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     warnings.filterwarnings('ignore')
     
     print("Running scFates trajectory inference...")

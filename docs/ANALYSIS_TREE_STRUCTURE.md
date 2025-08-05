@@ -33,11 +33,11 @@ output_dir/
     │   │   │   │   │   ├── stdout.txt
     │   │   │   │   │   └── stderr.txt
     │   │   │   │   └── output/
-    │   │   │   │       ├── output_data.h5ad
+    │   │   │   │       ├── _node_anndata.h5ad
     │   │   │   │       └── figures/
     │   │   │   └── latest -> job_TIMESTAMP_JOBID/
     │   │   ├── outputs/           # Final outputs
-    │   │   │   ├── output_data.h5ad
+    │   │   │   ├── _node_anndata.h5ad
     │   │   │   └── figures/
     │   │   └── agent_tasks/      # Related agent tasks
     │   │       ├── creator_TIMESTAMP/
@@ -101,7 +101,7 @@ Each node folder contains:
    - Contains logs, outputs, and execution metrics
 
 4. **outputs/**: Final successful outputs
-   - Latest successful output_data.h5ad
+   - Latest successful _node_anndata.h5ad
    - Generated figures
    - Linked from latest successful job
 
@@ -187,10 +187,10 @@ Each node folder contains:
 ### Finding a Node's Output
 ```bash
 # Latest output for a node
-tree_TREEID/nodes/node_NODEID/outputs/output_data.h5ad
+tree_TREEID/nodes/node_NODEID/outputs/_node_anndata.h5ad
 
 # Or via latest job link
-tree_TREEID/nodes/node_NODEID/jobs/latest/output/output_data.h5ad
+tree_TREEID/nodes/node_NODEID/jobs/latest/output/_node_anndata.h5ad
 ```
 
 ### Tracking Agent Activities

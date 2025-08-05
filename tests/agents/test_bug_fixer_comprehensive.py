@@ -41,13 +41,21 @@ def create_scfates_block_with_dependency_issue():
     
     # This will fail because scFates is not in requirements
     code = '''
-def run(adata, n_map=100, n_pcs=20, **kwargs):
+def run(path_dict, params):
     """Infer trajectory using scFates."""
     import scanpy as sc
     import pandas as pd
     import numpy as np
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Starting scFates trajectory inference...")
     print(f"Input shape: {adata.shape}")
     
@@ -128,11 +136,19 @@ def create_scfates_block_with_api_issue():
     )
     
     code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Trajectory with wrong API usage."""
     import scanpy as sc
     import scFates as scf
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Running trajectory analysis...")
     
     # Wrong: curve() requires preprocessing
@@ -456,10 +472,18 @@ def create_preprocessing_block():
     )
     
     code = '''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Basic preprocessing for trajectory analysis."""
     import scanpy as sc
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Preprocessing data...")
     
     # Basic filtering

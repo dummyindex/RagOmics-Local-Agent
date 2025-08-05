@@ -84,7 +84,7 @@ class BaseExecutor(ABC):
             environment = {
                 "COMPUTATION_ID": execution_id,
                 "FUNCTION_BLOCK_NAME": function_block.name,
-                "INPUT_DATA_PATH": "/workspace/input/data.h5ad",
+                "INPUT_DATA_PATH": "/workspace/input/_node_anndata.h5ad",
                 "OUTPUT_DIR": "/workspace/output",
                 "PARAMETERS_PATH": "/workspace/parameters.json",
                 "RAGOMICS_LOCAL_MODE": "true"
@@ -153,35 +153,43 @@ class BaseExecutor(ABC):
         pass
     
     def collect_results(self, execution_dir: Path, output_dir: Path) -> ExecutionResult:
-        """Collect results from execution directory."""
+        """Collect ALL results from execution directory."""
         
         output_dir.mkdir(parents=True, exist_ok=True)
         result = ExecutionResult(success=True)
         
-        # Check for output data
-        output_data_path = execution_dir / "output" / "output_data.h5ad"
-        if output_data_path.exists():
-            dest_path = output_dir / "output_data.h5ad"
-            shutil.copy2(output_data_path, dest_path)
-            result.output_data_path = str(dest_path)
-        
-        # Collect figures
-        figures_dir = execution_dir / "output" / "figures"
-        if figures_dir.exists():
-            dest_figures_dir = output_dir / "figures"
-            dest_figures_dir.mkdir(exist_ok=True)
-            
-            for fig_path in figures_dir.glob("*"):
-                if fig_path.suffix.lower() in [".png", ".jpg", ".jpeg", ".pdf", ".svg"]:
-                    dest_path = dest_figures_dir / fig_path.name
-                    shutil.copy2(fig_path, dest_path)
-                    result.figures.append(str(dest_path))
-        
-        # Collect metadata
-        metadata_path = execution_dir / "output" / "metadata.json"
-        if metadata_path.exists():
-            with open(metadata_path) as f:
-                result.metadata = json.load(f)
+        # Copy ALL files from execution output to job output directory
+        execution_output_dir = execution_dir / "output"
+        if execution_output_dir.exists():
+            # Copy all files in the output directory
+            for item in execution_output_dir.glob("*"):
+                if item.is_file():
+                    dest_path = output_dir / item.name
+                    shutil.copy2(item, dest_path)
+                    
+                    # Track specific file types
+                    if item.name == "_node_anndata.h5ad":
+                        result.output_data_path = str(dest_path)
+                    elif item.name == "_node_seuratObject.rds":
+                        # Also track R output files
+                        result.output_data_path = str(dest_path)
+                    elif item.name == "metadata.json":
+                        with open(item) as f:
+                            result.metadata = json.load(f)
+                elif item.is_dir():
+                    # Copy entire subdirectories (e.g., figures/)
+                    dest_dir = output_dir / item.name
+                    if item.name == "figures":
+                        # Special handling for figures directory
+                        dest_dir.mkdir(exist_ok=True)
+                        for fig_path in item.glob("*"):
+                            if fig_path.suffix.lower() in [".png", ".jpg", ".jpeg", ".pdf", ".svg"]:
+                                dest_fig = dest_dir / fig_path.name
+                                shutil.copy2(fig_path, dest_fig)
+                                result.figures.append(str(dest_fig))
+                    else:
+                        # Copy other directories as-is
+                        shutil.copytree(item, dest_dir, dirs_exist_ok=True)
         
         # Collect logs
         log_path = execution_dir / "output" / "execution.log"

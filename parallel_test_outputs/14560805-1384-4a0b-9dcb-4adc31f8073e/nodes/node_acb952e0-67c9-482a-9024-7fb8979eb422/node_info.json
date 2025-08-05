@@ -1,0 +1,13 @@
+{
+  "id": "acb952e0-67c9-482a-9024-7fb8979eb422",
+  "name": "quality_control",
+  "type": "python",
+  "parent_id": null,
+  "children_ids": [
+    "bb6001a2-0fae-4405-84eb-a3234fdec954"
+  ],
+  "state": "pending",
+  "created_at": "2025-08-03T04:34:35.042760",
+  "level": 0,
+  "debug_attempts": 0
+}

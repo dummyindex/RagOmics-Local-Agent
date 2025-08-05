@@ -2,8 +2,10 @@
 
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
+from datetime import datetime
 
 from .base_agent import BaseAgent
+from .agent_output_utils import AgentOutputLogger
 from .schemas import (
     FunctionBlockContent, ExistingFunctionBlockRef, 
     FunctionBlockRecommendation
@@ -44,6 +46,7 @@ Common single-cell analysis workflows include:
         self.llm_service = llm_service
         self.data_handler = DataHandler()
         self.function_creator = function_creator
+        self.agent_logger = None  # Will be initialized per node
         
     def process(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Select or create function blocks for the next analysis step.
@@ -56,6 +59,7 @@ Common single-cell analysis workflows include:
             - generation_mode: GenerationMode
             - max_children: int
             - data_path: Optional[Path]
+            - node_dir: Optional[Path] - Node directory for logging
             
         Returns:
             Dict with:
@@ -74,6 +78,10 @@ Common single-cell analysis workflows include:
         generation_mode = context['generation_mode']
         max_children = context['max_children']
         data_path = context.get('data_path')
+        
+        # Initialize agent logger if node_dir is provided
+        if 'node_dir' in context:
+            self.agent_logger = AgentOutputLogger(context['node_dir'], 'function_selector')
         
         # Create task if we have a task manager
         task_id = None
@@ -284,6 +292,16 @@ Common single-cell analysis workflows include:
                 {"role": "user", "content": prompt}
             ]
             
+            # Prepare LLM input for logging
+            llm_input = {
+                'messages': messages,
+                'schema': schema,
+                'temperature': 0.7,
+                'max_tokens': 4000,
+                'model': self.llm_service.model,
+                'timestamp': datetime.now().isoformat()
+            }
+            
             result = self.llm_service.chat_completion_json(
                 messages=messages,
                 json_schema=schema,
@@ -291,13 +309,21 @@ Common single-cell analysis workflows include:
                 max_tokens=4000
             )
             
-            # Log LLM interaction if we have a task
-            if task_id:
-                self.log_llm_interaction(
-                    prompt=prompt,
-                    response=str(result),
-                    model=self.llm_service.model,
-                    metadata={'generation_mode': generation_mode.value}
+            # Log LLM interaction if agent_logger is available
+            if self.agent_logger:
+                self.agent_logger.log_selection_process(
+                    available_functions=[],  # In future, pass actual available functions
+                    requirements={
+                        'user_request': user_request,
+                        'generation_mode': generation_mode.value,
+                        'max_branches': max_branches,
+                        'data_summary': data_summary
+                    },
+                    llm_input=llm_input,
+                    llm_output=result,
+                    selected_function=None,  # Will be multiple functions
+                    selection_reason=result.get('reasoning', 'Generated function blocks'),
+                    error=None
                 )
             
             # Ensure reasoning field exists
@@ -314,6 +340,19 @@ Common single-cell analysis workflows include:
             
         except Exception as e:
             self.logger.error(f"Error generating function blocks: {e}")
+            
+            # Log error if agent_logger is available
+            if self.agent_logger:
+                self.agent_logger.log_selection_process(
+                    available_functions=[],
+                    requirements={'user_request': user_request},
+                    llm_input=llm_input if 'llm_input' in locals() else None,
+                    llm_output=None,
+                    selected_function=None,
+                    selection_reason=None,
+                    error=str(e)
+                )
+            
             # Return empty recommendation on error
             return FunctionBlockRecommendation(
                 satisfied=False,
@@ -343,7 +382,7 @@ Common single-cell analysis workflows include:
                         'task_description': task_desc,
                         'user_request': user_request,
                         'parameters': fb_data.parameters if hasattr(fb_data, 'parameters') else fb_data.get('parameters', {}),
-                        'task_dir': task_dir  # Pass task_dir for saving LLM interactions
+                        'node_dir': task_dir  # Pass node_dir for logging (renamed from task_dir)
                     }
                     
                     # Create the function block
@@ -425,3 +464,16 @@ Common single-cell analysis workflows include:
             suggestions.append("differential_expression")
             
         return suggestions
+    
+    def select_function_block(self, requirements: Dict[str, Any]) -> Optional[Any]:
+        """Select an existing function block based on requirements.
+        
+        Args:
+            requirements: Dictionary with requirements for function block
+            
+        Returns:
+            Function block if found, None otherwise
+        """
+        # For testing purposes, always return None to force creation
+        # In real implementation, this would search existing function blocks
+        return None

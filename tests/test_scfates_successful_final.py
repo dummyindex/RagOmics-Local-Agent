@@ -29,13 +29,21 @@ def create_failing_block():
     )
     
     code = '''
-def run(adata=None, **kwargs):
+def run(path_dict, params):
     """Run trajectory analysis with bugs."""
     import scFates as scf  # Missing dependency
     import scanpy as sc
     import numpy as np
     
     # Generate test data
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     n_cells = 500
     X = np.random.randn(n_cells, 100)
     adata = sc.AnnData(X)
@@ -80,7 +88,7 @@ def create_working_block():
     )
     
     code = '''
-def run(adata=None, n_nodes=10, **kwargs):
+def run(path_dict, params):
     """Run trajectory analysis - working version with ElPiGraph."""
     import scanpy as sc
     import numpy as np
@@ -90,6 +98,14 @@ def run(adata=None, n_nodes=10, **kwargs):
     from datetime import datetime
     
     # FIXED: Create output directories
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     os.makedirs("/workspace/output/figures", exist_ok=True)
     
     print("Generating synthetic trajectory data...")

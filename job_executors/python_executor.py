@@ -37,8 +37,27 @@ class PythonExecutor(BaseExecutor):
         (execution_dir / "output").mkdir(exist_ok=True)
         (execution_dir / "output" / "figures").mkdir(exist_ok=True)
         
-        # Copy input data
-        shutil.copy2(input_data_path, execution_dir / "input" / "data.h5ad")
+        # Copy ALL files from parent's outputs folder to child's input folder
+        input_path = Path(input_data_path)
+        if input_path.is_dir():
+            # If input_data_path is a directory (parent's outputs folder), copy ALL files
+            for item in input_path.glob("*"):
+                if item.is_file():
+                    # Copy with original name to maintain consistency
+                    shutil.copy2(item, execution_dir / "input" / item.name)
+                elif item.is_dir():
+                    # Copy entire subdirectory (e.g., figures/)
+                    shutil.copytree(item, execution_dir / "input" / item.name, dirs_exist_ok=True)
+        else:
+            # If it's a single file (e.g., initial input), copy it with standard name
+            if input_path.name == "_node_anndata.h5ad":
+                shutil.copy2(input_path, execution_dir / "input" / "_node_anndata.h5ad")
+            else:
+                # For initial input or legacy files, copy as both original name and standard name
+                shutil.copy2(input_path, execution_dir / "input" / input_path.name)
+                # Also copy as standard name if it's an h5ad file
+                if input_path.suffix == ".h5ad":
+                    shutil.copy2(input_path, execution_dir / "input" / "_node_anndata.h5ad")
         
         # Write parameters
         self.write_parameters(execution_dir / "parameters.json", parameters)
@@ -82,7 +101,6 @@ import json
 import logging
 import traceback
 from pathlib import Path
-import anndata as ad
 
 # Set up logging
 logging.basicConfig(
@@ -102,38 +120,66 @@ def main():
         
         # Load parameters
         with open('/workspace/parameters.json') as f:
-            parameters = json.load(f)
-        logger.info(f"Loaded parameters: {parameters}")
+            params = json.load(f)
+        logger.info(f"Loaded parameters: {params}")
         
-        # Load input data
-        logger.info("Loading input data")
-        adata = ad.read_h5ad('/workspace/input/data.h5ad')
-        logger.info(f"Loaded data with shape: {adata.shape}")
+        # Create path dictionary with only directories
+        path_dict = {
+            "input_dir": "/workspace/input",
+            "output_dir": "/workspace/output"
+        }
         
-        # Import and run function block
+        logger.info(f"Path dictionary: {path_dict}")
+        logger.info(f"Parameters: {params}")
+        
+        # Import and run function block with path_dict and params
         logger.info("Importing function block")
         from function_block import run
         
-        logger.info("Executing function block")
-        result = run(adata, **parameters)
+        logger.info("Executing function block with path_dict and params")
+        run(path_dict, params)  # Pass both path_dict and params
         
-        # Handle different return types
-        if isinstance(result, ad.AnnData):
-            # Save the result AnnData
-            logger.info("Saving output data")
-            result.write_h5ad('/workspace/output/output_data.h5ad')
-        elif isinstance(result, dict):
-            # Function block returned a dictionary with multiple outputs
-            if 'adata' in result:
-                logger.info("Saving output data from result dict")
-                result['adata'].write_h5ad('/workspace/output/output_data.h5ad')
+        # Verify standard output was created (for anndata workflows)
+        standard_output = os.path.join(path_dict["output_dir"], "_node_anndata.h5ad")
+        if os.path.exists(standard_output):
+            logger.info(f"Standard output file _node_anndata.h5ad created successfully")
             
-            # Save any additional metadata
-            metadata = {k: v for k, v in result.items() 
-                       if k not in ['adata'] and isinstance(v, (str, int, float, list, dict))}
-            if metadata:
-                with open('/workspace/output/metadata.json', 'w') as f:
-                    json.dump(metadata, f, indent=2)
+            # Try to load and inspect the output to provide context
+            try:
+                import scanpy as sc
+                adata = sc.read_h5ad(standard_output)
+                
+                # Save data structure information for next nodes
+                data_info = {
+                    "shape": f"{adata.shape[0]} cells x {adata.shape[1]} genes",
+                    "obs_columns": list(adata.obs.columns),
+                    "var_columns": list(adata.var.columns),
+                    "obsm_keys": list(adata.obsm.keys()),
+                    "varm_keys": list(adata.varm.keys()),
+                    "uns_keys": list(adata.uns.keys()),
+                    "layers": list(adata.layers.keys()) if adata.layers else []
+                }
+                
+                # Save to JSON for next node
+                info_file = os.path.join(path_dict["output_dir"], "_data_structure.json")
+                with open(info_file, 'w') as f:
+                    json.dump(data_info, f, indent=2)
+                
+                # Also print for logging
+                logger.info(f"Output data structure: {json.dumps(data_info, indent=2)}")
+                
+            except Exception as e:
+                logger.warning(f"Could not inspect output data structure: {e}")
+        else:
+            # Check for any output files
+            import glob
+            output_files = glob.glob(os.path.join(path_dict["output_dir"], "*"))
+            if output_files:
+                logger.info(f"Found {len(output_files)} output files")
+                for f in output_files[:5]:  # Log first 5
+                    logger.info(f"  - {os.path.basename(f)}")
+            else:
+                logger.warning(f"No output files found in {path_dict['output_dir']}")
         
         logger.info("Function block execution completed successfully")
         

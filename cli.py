@@ -29,7 +29,7 @@ def cli():
 @click.option("--max-children", type=int, default=3, help="Maximum children per node")
 @click.option("--max-debug-trials", type=int, default=3, help="Maximum debug attempts per node")
 @click.option("--mode", type=click.Choice(["mixed", "only_new", "only_existing"]), default="mixed", help="Generation mode")
-@click.option("--model", type=str, default="gpt-4o-2024-08-06", help="OpenAI model to use")
+@click.option("--model", type=str, default="gpt-4o-mini", help="OpenAI model to use")
 @click.option("--api-key", type=str, envvar="OPENAI_API_KEY", help="OpenAI API key")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def analyze(input_file, request, output, max_nodes, max_children, max_debug_trials, mode, model, api_key, verbose):

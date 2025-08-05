@@ -41,13 +41,21 @@ def create_preprocessing_block():
     )
     
     code = '''
-def run(adata, min_shared_counts=20, n_top_genes=2000, n_pcs=30, n_neighbors=30, **kwargs):
+def run(path_dict, params):
     """Preprocess data for RNA velocity analysis."""
     import scanpy as sc
     import scvelo as scv
     import numpy as np
     import matplotlib.pyplot as plt
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Starting preprocessing for RNA velocity...")
     print(f"Input shape: {adata.shape}")
     
@@ -170,12 +178,20 @@ def create_velocity_steady_state_block():
     )
     
     code = '''
-def run(adata, vkey="velocity", n_jobs=4, **kwargs):
+def run(path_dict, params):
     """Compute RNA velocity using steady-state model."""
     import scvelo as scv
     import matplotlib.pyplot as plt
     import numpy as np
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Computing RNA velocity using steady-state model...")
     
     # Compute velocity
@@ -258,12 +274,20 @@ def create_velocity_stochastic_block():
     )
     
     code = '''
-def run(adata, vkey="velocity_stochastic", n_jobs=4, perc=95, **kwargs):
+def run(path_dict, params):
     """Compute RNA velocity using stochastic model."""
     import scvelo as scv
     import matplotlib.pyplot as plt
     import numpy as np
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Computing RNA velocity using stochastic model...")
     print(f"Parameters: perc={perc}")
     
@@ -360,12 +384,20 @@ def create_velocity_dynamical_block():
     )
     
     code = '''
-def run(adata, vkey="velocity_dynamical", n_jobs=4, n_top_genes=2000, **kwargs):
+def run(path_dict, params):
     """Compute RNA velocity using dynamical model."""
     import scvelo as scv
     import matplotlib.pyplot as plt
     import numpy as np
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Computing RNA velocity using dynamical model...")
     print("This may take a few minutes...")
     
@@ -477,13 +509,21 @@ def create_velocity_analysis_block():
     )
     
     code = '''
-def run(adata, n_genes=10, groups="leiden", **kwargs):
+def run(path_dict, params):
     """Perform comprehensive velocity analysis."""
     import scvelo as scv
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Performing comprehensive velocity analysis...")
     
     # Determine which velocity to use
@@ -648,13 +688,21 @@ def create_driver_genes_block():
     )
     
     code = '''
-def run(adata, n_top_genes=20, min_likelihood=0.1, **kwargs):
+def run(path_dict, params):
     """Identify and visualize driver genes."""
     import scvelo as scv
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Identifying driver genes...")
     
     # Determine velocity key
@@ -1205,12 +1253,20 @@ def test_scvelo_tree_4_multi_branch(input_data_path: Path, output_dir: Path):
         type=FunctionBlockType.PYTHON,
         description="Parameter sweep for velocity computation",
         code='''
-def run(adata, **kwargs):
+def run(path_dict, params):
     """Run velocity computation with different parameters."""
     import scvelo as scv
     import matplotlib.pyplot as plt
     import numpy as np
     
+    # Load data from path_dict
+    input_path = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+    if not os.path.exists(input_path):
+        h5ad_files = [f for f in os.listdir(path_dict["input_dir"]) if f.endswith(".h5ad")]
+        if h5ad_files:
+            input_path = os.path.join(path_dict["input_dir"], h5ad_files[0])
+    adata = sc.read_h5ad(input_path) if "sc" in locals() or "sc" in globals() else None
+
     print("Running parameter sweep for velocity computation...")
     
     # Different neighbor values

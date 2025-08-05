@@ -1,0 +1,289 @@
+{
+  "id": "14560805-1384-4a0b-9dcb-4adc31f8073e",
+  "root_node_id": "acb952e0-67c9-482a-9024-7fb8979eb422",
+  "nodes": {
+    "acb952e0-67c9-482a-9024-7fb8979eb422": {
+      "id": "acb952e0-67c9-482a-9024-7fb8979eb422",
+      "parent_id": null,
+      "analysis_id": "14560805-1384-4a0b-9dcb-4adc31f8073e",
+      "function_block": {
+        "id": "66852c55-5d40-43e7-8b2e-303def45db79",
+        "name": "quality_control",
+        "type": "python",
+        "description": "Quality control and filtering",
+        "parameters": {
+          "min_genes": 200
+        },
+        "static_config": {
+          "args": [
+            {
+              "name": "min_genes",
+              "value_type": "int",
+              "description": "Min genes",
+              "optional": true,
+              "default_value": 200,
+              "render_type": "text",
+              "options": null
+            }
+          ],
+          "description": "Quality control",
+          "tag": "qc",
+          "document_url": "",
+          "source": "generated",
+          "preset_env": null,
+          "input_specification": null,
+          "output_specification": null
+        },
+        "created_at": "2025-08-03 04:34:35.040712",
+        "code": "def run(adata=None, min_genes=200, **parameters):\n    import scanpy as sc\n    import os\n    import numpy as np\n    import matplotlib.pyplot as plt\n    \n    # FRAMEWORK CONVENTION: Load from standard input\n    if adata is None:\n        adata = sc.read_h5ad('/workspace/input/_node_anndata.h5ad')\n    \n    print(f\"QC: Input shape: {adata.shape}\")\n    \n    # Simulate QC processing\n    sc.pp.filter_cells(adata, min_genes=min_genes)\n    sc.pp.filter_genes(adata, min_cells=3)\n    \n    # Add QC metrics\n    adata.obs['n_genes'] = (adata.X > 0).sum(axis=1)\n    adata.obs['qc_pass'] = True\n    \n    # Create QC plot\n    os.makedirs('/workspace/output/figures', exist_ok=True)\n    fig, ax = plt.subplots(1, 1, figsize=(8, 6))\n    ax.hist(adata.obs['n_genes'], bins=50)\n    ax.set_xlabel('Number of genes')\n    ax.set_ylabel('Number of cells')\n    ax.set_title('QC: Gene Distribution')\n    plt.savefig('/workspace/output/figures/qc_genes_dist.png', dpi=150, bbox_inches='tight')\n    plt.close()\n    \n    print(f\"QC: Output shape: {adata.shape}\")\n    \n    # FRAMEWORK CONVENTION: Save to standard output\n    os.makedirs('/workspace/output', exist_ok=True)\n    adata.write('/workspace/output/_node_anndata.h5ad')\n    \n    # Save QC report\n    with open('/workspace/output/qc_report.txt', 'w') as f:\n        f.write(f\"QC Report\n\")\n        f.write(f\"Input cells: {adata.shape[0]}\n\")\n        f.write(f\"Input genes: {adata.shape[1]}\n\")\n        f.write(f\"Min genes filter: {min_genes}\n\")\n    \n    return adata",
+        "requirements": "scanpy>=1.9.0\nmatplotlib>=3.6.0",
+        "rest_task": null,
+        "new": true
+      },
+      "state": "pending",
+      "level": 0,
+      "children": [
+        "bb6001a2-0fae-4405-84eb-a3234fdec954"
+      ],
+      "execution_result": null,
+      "debug_attempts": 0,
+      "output_data_id": null,
+      "figures": [],
+      "logs": [],
+      "error": null,
+      "start_time": null,
+      "end_time": null,
+      "duration": null,
+      "created_at": "2025-08-03 04:34:35.040727",
+      "updated_at": "2025-08-03 04:34:35.040728"
+    },
+    "bb6001a2-0fae-4405-84eb-a3234fdec954": {
+      "id": "bb6001a2-0fae-4405-84eb-a3234fdec954",
+      "parent_id": "acb952e0-67c9-482a-9024-7fb8979eb422",
+      "analysis_id": "14560805-1384-4a0b-9dcb-4adc31f8073e",
+      "function_block": {
+        "id": "5935fa55-8a27-4e25-b6da-b367c5be5346",
+        "name": "normalization",
+        "type": "python",
+        "description": "Data normalization",
+        "parameters": {
+          "target_sum": 10000
+        },
+        "static_config": {
+          "args": [
+            {
+              "name": "target_sum",
+              "value_type": "float",
+              "description": "Target sum",
+              "optional": true,
+              "default_value": 10000,
+              "render_type": "text",
+              "options": null
+            }
+          ],
+          "description": "Normalization",
+          "tag": "norm",
+          "document_url": "",
+          "source": "generated",
+          "preset_env": null,
+          "input_specification": null,
+          "output_specification": null
+        },
+        "created_at": "2025-08-03 04:34:35.040761",
+        "code": "def run(adata=None, target_sum=10000, **parameters):\n    import scanpy as sc\n    import os\n    import matplotlib.pyplot as plt\n    \n    # FRAMEWORK CONVENTION: Load from standard input\n    if adata is None:\n        adata = sc.read_h5ad('/workspace/input/_node_anndata.h5ad')\n    \n    print(f\"Norm: Input shape: {adata.shape}\")\n    \n    # Normalize\n    sc.pp.normalize_total(adata, target_sum=target_sum)\n    sc.pp.log1p(adata)\n    \n    # Mark as normalized\n    adata.uns['normalized'] = True\n    adata.uns['norm_method'] = 'total_count'\n    \n    # Create normalization plot\n    os.makedirs('/workspace/output/figures', exist_ok=True)\n    fig, ax = plt.subplots(1, 1, figsize=(8, 6))\n    ax.hist(adata.X.sum(axis=1), bins=50)\n    ax.set_xlabel('Total counts (normalized)')\n    ax.set_ylabel('Number of cells')\n    ax.set_title(f'Normalization: Target sum = {target_sum}')\n    plt.savefig('/workspace/output/figures/norm_distribution.png', dpi=150, bbox_inches='tight')\n    plt.close()\n    \n    print(f\"Norm: Data normalized with target_sum={target_sum}\")\n    \n    # FRAMEWORK CONVENTION: Save to standard output\n    os.makedirs('/workspace/output', exist_ok=True)\n    adata.write('/workspace/output/_node_anndata.h5ad')\n    \n    # Save normalization info\n    with open('/workspace/output/norm_info.json', 'w') as f:\n        import json\n        json.dump({\n            'normalized': True,\n            'target_sum': target_sum,\n            'method': 'total_count',\n            'cells': adata.shape[0],\n            'genes': adata.shape[1]\n        }, f, indent=2)\n    \n    return adata",
+        "requirements": "scanpy>=1.9.0\nmatplotlib>=3.6.0",
+        "rest_task": null,
+        "new": true
+      },
+      "state": "pending",
+      "level": 1,
+      "children": [
+        "0abb557d-345b-4b39-9085-b3193473180a",
+        "bb2e79dc-c6cf-4be7-8893-ab79c5179384",
+        "800819de-4233-4a88-9df3-cc27829bd991"
+      ],
+      "execution_result": null,
+      "debug_attempts": 0,
+      "output_data_id": null,
+      "figures": [],
+      "logs": [],
+      "error": null,
+      "start_time": null,
+      "end_time": null,
+      "duration": null,
+      "created_at": "2025-08-03 04:34:35.040772",
+      "updated_at": "2025-08-03 04:34:35.040773"
+    },
+    "0abb557d-345b-4b39-9085-b3193473180a": {
+      "id": "0abb557d-345b-4b39-9085-b3193473180a",
+      "parent_id": "bb6001a2-0fae-4405-84eb-a3234fdec954",
+      "analysis_id": "14560805-1384-4a0b-9dcb-4adc31f8073e",
+      "function_block": {
+        "id": "1f0e589f-ed82-4daf-8ece-838ee59641e5",
+        "name": "pca_analysis",
+        "type": "python",
+        "description": "PCA dimensionality reduction",
+        "parameters": {
+          "n_comps": 50
+        },
+        "static_config": {
+          "args": [
+            {
+              "name": "n_comps",
+              "value_type": "int",
+              "description": "Number of components",
+              "optional": true,
+              "default_value": 50,
+              "render_type": "text",
+              "options": null
+            }
+          ],
+          "description": "PCA analysis",
+          "tag": "pca",
+          "document_url": "",
+          "source": "generated",
+          "preset_env": null,
+          "input_specification": null,
+          "output_specification": null
+        },
+        "created_at": "2025-08-03 04:34:35.040804",
+        "code": "def run(adata=None, n_comps=50, **parameters):\n    import scanpy as sc\n    import os\n    import matplotlib.pyplot as plt\n    \n    # FRAMEWORK CONVENTION: Load from standard input\n    if adata is None:\n        adata = sc.read_h5ad('/workspace/input/_node_anndata.h5ad')\n    \n    print(f\"PCA: Input shape: {adata.shape}\")\n    \n    # Scale data\n    sc.pp.scale(adata, max_value=10)\n    \n    # Run PCA\n    sc.tl.pca(adata, n_comps=n_comps)\n    \n    # Store PCA info\n    adata.uns['pca_computed'] = True\n    adata.uns['n_pcs'] = n_comps\n    \n    # Create PCA plots\n    os.makedirs('/workspace/output/figures', exist_ok=True)\n    sc.pl.pca_variance_ratio(adata, n_pcs=30, save='_variance.png', show=False)\n    if os.path.exists('figures/pca_variance.png'):\n        shutil.move('figures/pca_variance.png', '/workspace/output/figures/pca_variance.png')\n    \n    print(f\"PCA: Computed {n_comps} components\")\n    \n    # FRAMEWORK CONVENTION: Save to standard output\n    os.makedirs('/workspace/output', exist_ok=True)\n    adata.write('/workspace/output/_node_anndata.h5ad')\n    \n    # Save PCA results\n    import numpy as np\n    with open('/workspace/output/pca_results.txt', 'w') as f:\n        f.write(f\"PCA Results\n\")\n        f.write(f\"Components: {n_comps}\n\")\n        f.write(f\"Explained variance (first 5): {adata.uns['pca']['variance'][:5]}\n\")\n    \n    return adata",
+        "requirements": "scanpy>=1.9.0\nmatplotlib>=3.6.0",
+        "rest_task": null,
+        "new": true
+      },
+      "state": "pending",
+      "level": 2,
+      "children": [],
+      "execution_result": null,
+      "debug_attempts": 0,
+      "output_data_id": null,
+      "figures": [],
+      "logs": [],
+      "error": null,
+      "start_time": null,
+      "end_time": null,
+      "duration": null,
+      "created_at": "2025-08-03 04:34:35.040847",
+      "updated_at": "2025-08-03 04:34:35.040848"
+    },
+    "bb2e79dc-c6cf-4be7-8893-ab79c5179384": {
+      "id": "bb2e79dc-c6cf-4be7-8893-ab79c5179384",
+      "parent_id": "bb6001a2-0fae-4405-84eb-a3234fdec954",
+      "analysis_id": "14560805-1384-4a0b-9dcb-4adc31f8073e",
+      "function_block": {
+        "id": "f8b16f6c-a404-4a74-9d40-a91fe6e537ae",
+        "name": "clustering_low_res",
+        "type": "python",
+        "description": "Clustering analysis _low_res",
+        "parameters": {
+          "resolution": 0.3
+        },
+        "static_config": {
+          "args": [
+            {
+              "name": "resolution",
+              "value_type": "float",
+              "description": "Resolution",
+              "optional": true,
+              "default_value": 0.5,
+              "render_type": "text",
+              "options": null
+            }
+          ],
+          "description": "Clustering _low_res",
+          "tag": "clustering",
+          "document_url": "",
+          "source": "generated",
+          "preset_env": null,
+          "input_specification": null,
+          "output_specification": null
+        },
+        "created_at": "2025-08-03 04:34:35.040823",
+        "code": "def run(adata=None, resolution=0.5, **parameters):\n    import scanpy as sc\n    import os\n    import matplotlib.pyplot as plt\n    \n    # FRAMEWORK CONVENTION: Load from standard input\n    if adata is None:\n        adata = sc.read_h5ad('/workspace/input/_node_anndata.h5ad')\n    \n    print(f\"Clustering_low_res: Input shape: {adata.shape}\")\n    \n    # Compute neighbors if needed\n    if 'neighbors' not in adata.uns:\n        sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)\n    \n    # Run clustering\n    sc.tl.leiden(adata, resolution=resolution, key_added=f'leiden_low_res')\n    \n    # Store clustering info\n    adata.uns[f'clustering_low_res_done'] = True\n    adata.uns[f'resolution_low_res'] = resolution\n    n_clusters = len(adata.obs[f'leiden_low_res'].unique())\n    \n    print(f\"Clustering_low_res: Found {n_clusters} clusters at resolution={resolution}\")\n    \n    # FRAMEWORK CONVENTION: Save to standard output\n    os.makedirs('/workspace/output', exist_ok=True)\n    adata.write('/workspace/output/_node_anndata.h5ad')\n    \n    # Save clustering results\n    with open(f'/workspace/output/clustering_low_res_results.txt', 'w') as f:\n        f.write(f\"Clustering Results_low_res\\n\")\n        f.write(f\"Resolution: {resolution}\\n\")\n        f.write(f\"Number of clusters: {n_clusters}\\n\")\n        f.write(f\"Cluster sizes: {adata.obs[f'leiden_low_res'].value_counts().to_dict()}\\n\")\n    \n    return adata",
+        "requirements": "scanpy>=1.9.0",
+        "rest_task": null,
+        "new": true
+      },
+      "state": "pending",
+      "level": 2,
+      "children": [],
+      "execution_result": null,
+      "debug_attempts": 0,
+      "output_data_id": null,
+      "figures": [],
+      "logs": [],
+      "error": null,
+      "start_time": null,
+      "end_time": null,
+      "duration": null,
+      "created_at": "2025-08-03 04:34:35.040856",
+      "updated_at": "2025-08-03 04:34:35.040856"
+    },
+    "800819de-4233-4a88-9df3-cc27829bd991": {
+      "id": "800819de-4233-4a88-9df3-cc27829bd991",
+      "parent_id": "bb6001a2-0fae-4405-84eb-a3234fdec954",
+      "analysis_id": "14560805-1384-4a0b-9dcb-4adc31f8073e",
+      "function_block": {
+        "id": "0e3e1e9d-7ba8-4ee7-9e62-357c4e279bab",
+        "name": "clustering_high_res",
+        "type": "python",
+        "description": "Clustering analysis _high_res",
+        "parameters": {
+          "resolution": 1.0
+        },
+        "static_config": {
+          "args": [
+            {
+              "name": "resolution",
+              "value_type": "float",
+              "description": "Resolution",
+              "optional": true,
+              "default_value": 0.5,
+              "render_type": "text",
+              "options": null
+            }
+          ],
+          "description": "Clustering _high_res",
+          "tag": "clustering",
+          "document_url": "",
+          "source": "generated",
+          "preset_env": null,
+          "input_specification": null,
+          "output_specification": null
+        },
+        "created_at": "2025-08-03 04:34:35.040836",
+        "code": "def run(adata=None, resolution=0.5, **parameters):\n    import scanpy as sc\n    import os\n    import matplotlib.pyplot as plt\n    \n    # FRAMEWORK CONVENTION: Load from standard input\n    if adata is None:\n        adata = sc.read_h5ad('/workspace/input/_node_anndata.h5ad')\n    \n    print(f\"Clustering_high_res: Input shape: {adata.shape}\")\n    \n    # Compute neighbors if needed\n    if 'neighbors' not in adata.uns:\n        sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)\n    \n    # Run clustering\n    sc.tl.leiden(adata, resolution=resolution, key_added=f'leiden_high_res')\n    \n    # Store clustering info\n    adata.uns[f'clustering_high_res_done'] = True\n    adata.uns[f'resolution_high_res'] = resolution\n    n_clusters = len(adata.obs[f'leiden_high_res'].unique())\n    \n    print(f\"Clustering_high_res: Found {n_clusters} clusters at resolution={resolution}\")\n    \n    # FRAMEWORK CONVENTION: Save to standard output\n    os.makedirs('/workspace/output', exist_ok=True)\n    adata.write('/workspace/output/_node_anndata.h5ad')\n    \n    # Save clustering results\n    with open(f'/workspace/output/clustering_high_res_results.txt', 'w') as f:\n        f.write(f\"Clustering Results_high_res\\n\")\n        f.write(f\"Resolution: {resolution}\\n\")\n        f.write(f\"Number of clusters: {n_clusters}\\n\")\n        f.write(f\"Cluster sizes: {adata.obs[f'leiden_high_res'].value_counts().to_dict()}\\n\")\n    \n    return adata",
+        "requirements": "scanpy>=1.9.0",
+        "rest_task": null,
+        "new": true
+      },
+      "state": "pending",
+      "level": 2,
+      "children": [],
+      "execution_result": null,
+      "debug_attempts": 0,
+      "output_data_id": null,
+      "figures": [],
+      "logs": [],
+      "error": null,
+      "start_time": null,
+      "end_time": null,
+      "duration": null,
+      "created_at": "2025-08-03 04:34:35.040864",
+      "updated_at": "2025-08-03 04:34:35.040864"
+    }
+  },
+  "user_request": "Parallel multi-branch analysis with output demonstration",
+  "input_data_path": "/var/folders/m5/dc_kmwcs2_3fqkytr_j09wx00000gn/T/tmp3p1yd_my/test_data.h5ad",
+  "max_nodes": 10,
+  "max_children_per_node": 3,
+  "max_debug_trials": 3,
+  "generation_mode": "only_new",
+  "llm_model": "gpt-4o-2024-08-06",
+  "total_nodes": 5,
+  "completed_nodes": 0,
+  "failed_nodes": 0,
+  "created_at": "2025-08-03 04:34:35.040645",
+  "updated_at": "2025-08-03 04:34:35.040653"
+}
