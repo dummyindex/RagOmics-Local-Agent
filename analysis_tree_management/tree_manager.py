@@ -489,13 +489,14 @@ class AnalysisTreeManager:
             "max_depth": max((n.level for n in self.tree.nodes.values()), default=0)
         }
     
-    def update_node_state(self, node_id: str, state: NodeState, output_data_id: Optional[str] = None):
+    def update_node_state(self, node_id: str, state: NodeState, output_data_id: Optional[str] = None, error: Optional[str] = None):
         """Update the state of a node in the tree.
         
         Args:
             node_id: ID of the node to update
             state: New state for the node
             output_data_id: Output data path if completed
+            error: Error message if failed
         """
         if not self.tree or node_id not in self.tree.nodes:
             return
@@ -504,22 +505,36 @@ class AnalysisTreeManager:
         old_state = node.state
         node.state = state
         
+        # Store error if provided
+        if error:
+            node.error = error
+        
         if output_data_id:
             node.output_data_id = output_data_id
         
         # Update tree counters
-        if old_state != state:
-            if old_state == NodeState.COMPLETED and state != NodeState.COMPLETED:
-                self.tree.completed_nodes = max(0, self.tree.completed_nodes - 1)
-            elif state == NodeState.COMPLETED and old_state != NodeState.COMPLETED:
-                self.tree.completed_nodes += 1
-            
-            if old_state == NodeState.FAILED and state != NodeState.FAILED:
-                self.tree.failed_nodes = max(0, self.tree.failed_nodes - 1)
-            elif state == NodeState.FAILED and old_state != NodeState.FAILED:
-                self.tree.failed_nodes += 1
+        # Convert states to string for comparison if needed
+        old_state_str = old_state.value if hasattr(old_state, 'value') else str(old_state)
+        state_str = state.value if hasattr(state, 'value') else str(state)
         
-        logger.info(f"Updated node {node_id} state: {old_state.value} -> {state.value}")
+        if old_state_str != state_str:
+            # Handle completed state changes
+            if state == NodeState.COMPLETED or state_str == "completed":
+                if old_state != NodeState.COMPLETED and old_state_str != "completed":
+                    self.tree.completed_nodes += 1
+            elif old_state == NodeState.COMPLETED or old_state_str == "completed":
+                if state != NodeState.COMPLETED and state_str != "completed":
+                    self.tree.completed_nodes = max(0, self.tree.completed_nodes - 1)
+            
+            # Handle failed state changes
+            if state == NodeState.FAILED or state_str == "failed":
+                if old_state != NodeState.FAILED and old_state_str != "failed":
+                    self.tree.failed_nodes += 1
+            elif old_state == NodeState.FAILED or old_state_str == "failed":
+                if state != NodeState.FAILED and state_str != "failed":
+                    self.tree.failed_nodes = max(0, self.tree.failed_nodes - 1)
+        
+        # Tree will be saved by caller if needed
     
     def create_output_structure(self, output_dir: Path) -> Dict[str, Path]:
         """Create the standardized output directory structure.
@@ -667,7 +682,7 @@ class AnalysisTreeManager:
         (job_dir / "logs").mkdir(exist_ok=True)
         (job_dir / "output").mkdir(exist_ok=True)
         (job_dir / "output" / "figures").mkdir(exist_ok=True)
-        (job_dir / "output" / "past_jobs").mkdir(exist_ok=True)  # Added past_jobs
+        # NOTE: No past_jobs directory - each job is its own directory under jobs/
         
         # Update latest symlink
         latest_link = node_dir / "jobs" / "latest"

@@ -12,7 +12,7 @@ from ragomics_agent_local.models import (
     AnalysisTree, GenerationMode, NewFunctionBlock, 
     FunctionBlockType, StaticConfig, Arg, NodeState
 )
-from ragomics_agent_local.agents import FunctionSelectorAgent
+from ragomics_agent_local.agents import FunctionCreatorAgent
 from ragomics_agent_local.analysis_tree_management import AnalysisTreeManager
 from ragomics_agent_local.job_executors import ExecutorManager
 from ragomics_agent_local.analysis_tree_management.node_executor import NodeExecutor

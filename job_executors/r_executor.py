@@ -110,6 +110,9 @@ class RExecutor(BaseExecutor):
                     install_commands.append(f'BiocManager::install("{pkg}")')
                 else:
                     install_commands.append(f'remotes::install_github("{line}")')
+            elif '/' in line:
+                # GitHub package in user/repo format
+                install_commands.append(f'remotes::install_github("{line}")')
             else:
                 # CRAN package
                 install_commands.append(f'install.packages("{line}", repos="https://cloud.r-project.org")')

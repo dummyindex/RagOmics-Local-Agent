@@ -27,9 +27,12 @@ RUN apt-get update && apt-get install -y \
 RUN ln -sf /usr/bin/python3 /usr/bin/python && \
     ln -sf /usr/bin/pip3 /usr/bin/pip
 
-# Install newer meson via pip and ensure it's in PATH
-RUN pip install --no-cache-dir meson>=0.63.3 && \
-    ln -sf /usr/local/bin/meson /usr/bin/meson
+# Install newer meson via pip since scikit-misc requires >= 0.63.3
+# First ensure pip is up to date
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir "meson>=0.63.3" ninja
+# Verify meson version
+RUN meson --version
 
 # Set working directory
 WORKDIR /workspace

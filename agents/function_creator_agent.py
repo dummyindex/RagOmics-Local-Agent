@@ -1,7 +1,7 @@
 """Agent responsible for creating new function blocks with proper implementation."""
 
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 from datetime import datetime
 
@@ -9,7 +9,8 @@ from .base_agent import BaseAgent
 from .agent_output_utils import AgentOutputLogger
 from ..models import (
     NewFunctionBlock, FunctionBlockType, StaticConfig, Arg,
-    InputSpecification, OutputSpecification, FileInfo, FileType
+    InputSpecification, OutputSpecification, FileInfo, FileType,
+    ExistingFunctionBlock, GenerationMode, AnalysisTree, AnalysisNode
 )
 from ..llm_service import OpenAIService
 from ..utils import setup_logger
@@ -18,7 +19,13 @@ logger = setup_logger(__name__)
 
 
 class FunctionCreatorAgent(BaseAgent):
-    """Agent that creates new function blocks based on analysis requirements."""
+    """Agent that creates or selects function blocks based on analysis requirements.
+    
+    This unified agent handles both:
+    1. Creating new function blocks with code generation
+    2. Selecting appropriate existing function blocks
+    3. Deciding whether to create new or use existing blocks
+    """
     
     # Detailed documentation for function block implementation
     FUNCTION_BLOCK_DOCUMENTATION = """
@@ -50,17 +57,30 @@ def run(path_dict, params):
 - Function blocks receive path_dict and params arguments
 - Construct input path using path_dict["input_dir"]
 - For anndata workflows, use standard naming:
+
+**For the FIRST/ROOT node only (reads original data):**
 ```python
 import scanpy as sc
 import os
 
-# Construct and read input data - REQUIRED pattern
-input_file = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
-
+# ROOT NODE ONLY - reads the original input file
+input_file = os.path.join(path_dict["input_dir"], "zebrafish.h5ad")  # or whatever the original file is
 if os.path.exists(input_file):
     adata = sc.read_h5ad(input_file)
 else:
-    # Handle missing input appropriately
+    raise FileNotFoundError(f"Input file not found: {input_file}")
+```
+
+**For ALL SUBSEQUENT nodes (reads from previous node):**
+```python
+import scanpy as sc
+import os
+
+# SUBSEQUENT NODES - ALWAYS read from _node_anndata.h5ad
+input_file = os.path.join(path_dict["input_dir"], "_node_anndata.h5ad")
+if os.path.exists(input_file):
+    adata = sc.read_h5ad(input_file)
+else:
     raise FileNotFoundError(f"Input file not found: {input_file}")
 ```
 
@@ -94,6 +114,65 @@ sc.pl.umap(adata, color='leiden', save='_leiden.png', show=False)
 # This saves to: figures_dir / 'umap_leiden.png'
 ```
 - Logs: Print to stdout (will be captured)
+
+## R Function Block Structure
+
+### R Function Signature:
+```r
+run <- function(path_dict, params) {
+    # Function implementation
+}
+```
+
+### R Input/Output Patterns:
+```r
+# Load required libraries
+library(Seurat)
+
+# Construct file paths
+input_file <- file.path(path_dict$input_dir, "_node_seuratObject.rds")
+output_file <- file.path(path_dict$output_dir, "_node_seuratObject.rds")
+
+# Read input
+if (file.exists(input_file)) {
+    seurat_obj <- readRDS(input_file)
+} else {
+    stop(paste("Input file not found:", input_file))
+}
+
+# Process data
+# ... your analysis code ...
+
+# Save output
+saveRDS(seurat_obj, output_file)
+cat("Output saved to:", output_file, "\n")
+
+# Create figures directory
+figures_dir <- file.path(path_dict$output_dir, "figures")
+dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+### R Package Management:
+**CRITICAL**: R function blocks DO NOT use requirements.txt. Instead:
+- R packages are specified directly in the requirements field
+- The system automatically generates install_packages.R from your requirements
+- Format for R requirements:
+  - CRAN packages: just the package name (e.g., "Seurat", "ggplot2")
+  - Bioconductor packages: "Bioconductor::package_name" (e.g., "Bioconductor::SingleCellExperiment")
+  - GitHub packages: "user/repo" format (e.g., "dynverse/princurve")
+- Example R requirements:
+  ```
+  Seurat
+  slingshot
+  Bioconductor::SingleCellExperiment
+  ggplot2
+  ```
+
+### Language Interoperability:
+- The system automatically handles conversion between Python and R
+- When a Python node outputs _node_anndata.h5ad and the next node is R, a conversion node is inserted
+- When an R node outputs _node_seuratObject.rds and the next node is Python, a conversion node is inserted
+- Do NOT use rpy2 or reticulate for cross-language calls
 
 ## Directory Structure
 - `path_dict["input_dir"]`: Input directory (read-only)
@@ -181,6 +260,13 @@ def run(path_dict, params):
 - `sc.pl.scatter`, `sc.pl.umap`, `sc.pl.pca` expect column names (strings), NOT numpy arrays or pandas Series
 - The `color` parameter must be a string representing a column name in `.obs` or `.var`
 - To save figures properly, always set `sc.settings.figdir` first
+- For histograms, use matplotlib directly or sc.pl.violin/sc.pl.scatter with appropriate data
+
+**CRITICAL: DPT/Pseudotime specific issues:**
+- DPT creates `adata.obs['dpt_pseudotime']`, NOT `adata.obs['dpt']`
+- Always check if a computation result exists before trying to access it
+- Don't try to load CSV files that haven't been created yet
+- Don't use ellipsis (...) as placeholders - write complete working code
 
 **Incorrect (will fail):**
 ```python
@@ -199,6 +285,16 @@ sc.pl.umap(adata, color='kmeans', ...)
 
 # RIGHT - for PCA visualization
 sc.pl.pca(adata, color='leiden', ...)
+
+# RIGHT - for histograms, use matplotlib directly
+import matplotlib.pyplot as plt
+plt.figure(figsize=(8, 6))
+plt.hist(adata.obs['n_genes'], bins=30)
+plt.xlabel('Number of Genes')
+plt.ylabel('Number of Cells')
+plt.title('Gene Count Distribution')
+plt.savefig(os.path.join(figures_dir, 'gene_counts.png'))
+plt.close()
 ```
 
 ### 4. Saving Figures
@@ -254,14 +350,62 @@ def run(path_dict, params):
 
 Your task is to create complete, working function blocks that follow the framework conventions for processing single-cell data.
 
-CRITICAL REQUIREMENTS:
+CRITICAL PRINCIPLES:
+1. **ONE TASK PER FUNCTION BLOCK**: Each function block must perform exactly ONE specific task
+   - NEVER combine multiple steps like "filter AND normalize AND log transform" in one block
+   - Each distinct operation (filter, normalize, log1p, PCA, UMAP, etc.) must be its own block
+   - If the user lists steps as "1. First step... 2. Second step... 3. Third step...", create SEPARATE blocks
+2. **MODULAR WORKFLOW**: Complex requests must be broken into multiple sequential nodes
+3. **PROPER SEQUENCING**: Ensure correct order of operations (e.g., normalize before PCA, PCA before clustering)
+4. **LANGUAGE DETECTION**: 
+   - Identify whether the requested tool/package is R or Python based
+   - R packages: Seurat, Monocle3, Slingshot, scater, etc.
+   - Python packages: scanpy, palantir, scFates, cellrank, etc.
+   - If user mentions "(R)" or "(Python)", respect that language choice
+   - Set the "type" field to "r" or "python" accordingly
+5. **PREPROCESSING REQUIREMENTS**: Many analysis methods require preprocessing:
+   - Pseudotime methods (DPT, PAGA) need: normalization, log transform, highly variable genes, PCA, neighbors
+   - Clustering needs: normalization, scaling, PCA, neighbors
+   - UMAP/tSNE need: PCA or highly variable genes
+6. **DATA VERIFICATION**: Always check if required data exists before using it:
+   - Check for required columns in adata.obs before accessing
+   - Check for embeddings (X_pca, X_umap) in adata.obsm before using
+   - Verify computation results exist before trying to access them
+
+
+LANGUAGE SUPPORT:
+- You can create both Python and R function blocks
+- Python blocks process AnnData objects (_node_anndata.h5ad)
+- R blocks process Seurat objects (_node_seuratObject.rds)
+- When a previous node outputs data in a different language format, the system automatically inserts conversion nodes
+- Do NOT use rpy2 or reticulate for language interoperability
+
+CRITICAL REQUIREMENTS FOR PYTHON:
 1. Function signature: def run(path_dict, params)
 2. Input/output paths use path_dict["input_dir"] and path_dict["output_dir"]
-3. Read input anndata from "_node_anndata.h5ad" file
-4. Save output anndata to "_node_anndata.h5ad" file
+3. **ALWAYS** read input anndata from "_node_anndata.h5ad" file (NOT the original filename like zebrafish.h5ad)
+   - Exception: ONLY the first/root node reads the original file (e.g., zebrafish.h5ad)
+   - All subsequent nodes MUST read from "_node_anndata.h5ad"
+4. **ALWAYS** save output anndata to "_node_anndata.h5ad" file
 5. Create figures in "figures" subdirectory
 6. Handle parameters appropriately from params argument
 7. Return the processed adata object
+8. NEVER use placeholders like ... or pass - write complete working code
+9. NEVER try to read files that don't exist (e.g., CSV files from other methods)
+10. For complex requests with multiple methods, focus on ONE method per node
+
+CRITICAL REQUIREMENTS FOR R:
+1. Function signature: run <- function(path_dict, params)
+2. Input/output paths use path_dict$input_dir and path_dict$output_dir
+3. Read input Seurat from "_node_seuratObject.rds" file
+4. Save output Seurat to "_node_seuratObject.rds" file
+5. Create figures in "figures" subdirectory
+6. Handle parameters appropriately from params list
+7. Return the processed Seurat object
+8. **PACKAGE REQUIREMENTS**: List R packages in requirements field (NOT requirements.txt):
+   - CRAN packages: just package name (e.g., "Seurat")
+   - Bioconductor: "Bioconductor::package_name"
+   - GitHub: "user/repo" format
 
 IMPORTANT CODING GUIDELINES:
 - Use proper string formatting - avoid complex f-strings with nested quotes/brackets
@@ -331,16 +475,21 @@ Always ensure your code is production-ready with proper error handling, informat
                             "properties": {
                                 "name": {"type": "string", "description": "Function block name (snake_case)"},
                                 "description": {"type": "string", "description": "Brief description"},
-                                "code": {"type": "string", "description": "Complete Python code with def run(path_dict, params)"},
+                                "code": {"type": "string", "description": "Complete Python/R code with function signature: Python: def run(path_dict, params) or R: run <- function(path_dict, params)"},
                                 "requirements": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "description": "List of package requirements - ONLY external packages like scanpy, pandas, NOT built-in modules like os, sys, pathlib"
+                                    "description": "List of package requirements - For Python: external packages like scanpy, pandas (NOT built-in modules). For R: package names, Bioconductor::package, or user/repo format"
                                 },
                                 "parameters": {
                                     "type": "object",
                                     "description": "Default parameter values as key-value pairs",
                                     "additionalProperties": True
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["python", "r"],
+                                    "description": "Language type of the function block - 'python' or 'r'"
                                 },
                                 "static_config": {
                                     "type": "object",
@@ -470,6 +619,26 @@ Always ensure your code is production-ready with proper error handling, informat
         parts.append("\n## Context")
         parts.append(f"User Request: {context['user_request']}")
         
+        # Add node position information
+        if context.get('is_root_node', False):
+            parts.append("\n**IMPORTANT**: This is the ROOT/FIRST node in the workflow.")
+            parts.append("- Read the original input file (e.g., zebrafish.h5ad)")
+            parts.append("- Save output as _node_anndata.h5ad for subsequent nodes")
+        else:
+            parts.append("\n**IMPORTANT**: This is a SUBSEQUENT node (not the first).")
+            parts.append("- Read input from _node_anndata.h5ad (output from previous node)")
+            parts.append("- Save output as _node_anndata.h5ad for next nodes")
+        
+        # Add language detection hints
+        parts.append("\n## Language Detection")
+        user_request_lower = context['user_request'].lower()
+        if "(r)" in user_request_lower or any(pkg in user_request_lower for pkg in ["slingshot", "monocle", "seurat", "deseq"]):
+            parts.append("**Note**: This request mentions R-specific packages/tools. Create an R function block with type='r'.")
+        elif "(python)" in user_request_lower or any(pkg in user_request_lower for pkg in ["scanpy", "palantir", "scfates", "cellrank"]):
+            parts.append("**Note**: This request mentions Python-specific packages/tools. Create a Python function block with type='python'.")
+        else:
+            parts.append("Determine the appropriate language (Python or R) based on the requested tools/packages.")
+        
         # Add parent output structure if available
         if 'parent_output_structure' in context:
             parts.append("\n## Input Data Structure (from previous processing step)")
@@ -505,7 +674,7 @@ Always ensure your code is production-ready with proper error handling, informat
         parts.append("2. Read input data from path_dict['input_dir']")
         parts.append("3. Process the data according to the task")
         parts.append("4. Save outputs to path_dict['output_dir']")
-        parts.append("5. Create visualizations if appropriate")
+        parts.append("5. Create visualizations if appropriate for this specific task")
         parts.append("6. Print informative messages about the processing")
         parts.append("7. Return the processed data")
         
@@ -569,9 +738,14 @@ Always ensure your code is production-ready with proper error handling, informat
         if 'output_specification' in context:
             static_config.output_specification = context['output_specification']
         
-        # Determine language from code
+        # Determine language from LLM response or code analysis
         code = result['code']
-        fb_type = FunctionBlockType.R if 'library(' in code or '<-' in code else FunctionBlockType.PYTHON
+        # First check if LLM explicitly specified the type
+        if 'type' in result:
+            fb_type = FunctionBlockType.R if result['type'].lower() == 'r' else FunctionBlockType.PYTHON
+        else:
+            # Fallback to code analysis if type not specified
+            fb_type = FunctionBlockType.R if 'library(' in code or '<-' in code else FunctionBlockType.PYTHON
         
         # Handle requirements as either array or string
         requirements = result.get('requirements', '')
@@ -614,3 +788,250 @@ Always ensure your code is production-ready with proper error handling, informat
             context["parent_output_structure"] = specification["parent_output_structure"]
         
         return self.process(context)
+    
+    def process_selection_or_creation(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Unified method to select existing or create new function blocks.
+        
+        This method replaces the separate FunctionSelectorAgent functionality.
+        
+        Required context keys:
+            - user_request: str
+            - tree: AnalysisTree
+            - current_node: Optional[AnalysisNode]
+            - parent_chain: List[AnalysisNode]
+            - generation_mode: GenerationMode
+            - max_children: int
+            - data_summary: Optional[Dict[str, Any]]
+            
+        Returns:
+            Dict with:
+                - function_blocks: List[Union[NewFunctionBlock, ExistingFunctionBlock]]
+                - satisfied: bool
+                - reasoning: str
+        """
+        user_request = context['user_request']
+        tree = context['tree']
+        current_node = context.get('current_node')
+        parent_chain = context.get('parent_chain', [])
+        generation_mode = context['generation_mode']
+        max_children = context['max_children']
+        data_summary = context.get('data_summary', {})
+        
+        # Build prompt for LLM to decide what function blocks are needed
+        prompt = self._build_selection_prompt(
+            user_request=user_request,
+            tree_state=self._get_tree_state(tree),
+            current_node=current_node,
+            parent_chain=parent_chain,
+            generation_mode=generation_mode,
+            max_children=max_children,
+            data_summary=data_summary
+        )
+        
+        # Define schema for response
+        schema = {
+            "name": "function_block_recommendation",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "satisfied": {"type": "boolean", "description": "Whether the user request is fully satisfied"},
+                    "reasoning": {"type": "string", "description": "Explanation of the decision"},
+                    "next_function_blocks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "description": {"type": "string"},
+                                "task": {"type": "string"},
+                                "create_new": {"type": "boolean", "description": "True to create new, False to use existing"},
+                                "parameters": {"type": "object"}
+                            },
+                            "required": ["name", "description", "task", "create_new"]
+                        }
+                    }
+                },
+                "required": ["satisfied", "reasoning", "next_function_blocks"]
+            }
+        }
+        
+        try:
+            # Call LLM
+            messages = [
+                {"role": "system", "content": self.SELECTION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ]
+            
+            result = self.llm_service.chat_completion_json(
+                messages=messages,
+                json_schema=schema,
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            # Process recommendations
+            function_blocks = []
+            for fb_spec in result.get('next_function_blocks', []):
+                # Enforce generation mode
+                should_create_new = fb_spec.get('create_new', True)
+                if generation_mode == GenerationMode.ONLY_NEW:
+                    should_create_new = True
+                elif generation_mode == GenerationMode.ONLY_EXISTING:
+                    should_create_new = False
+                    
+                if should_create_new:
+                    # Create new function block
+                    creation_context = {
+                        'task_description': fb_spec['task'],
+                        'user_request': user_request,
+                        'function_name': fb_spec['name'],
+                        'description': fb_spec['description'],
+                        'parameters': fb_spec.get('parameters', {}),
+                        'is_root_node': context.get('is_root_node', False)  # Pass through root node flag
+                    }
+                    
+                    # Add parent output structure if available
+                    if current_node and hasattr(current_node, 'output_data_structure'):
+                        creation_context['parent_output_structure'] = current_node.output_data_structure
+                    
+                    block = self.process(creation_context)
+                    if block:
+                        function_blocks.append(block)
+                else:
+                    # For now, we don't have a library of existing blocks
+                    # In future, this would look up existing blocks
+                    logger.warning(f"Existing block requested but not implemented: {fb_spec['name']}")
+            
+            return {
+                'function_blocks': function_blocks,
+                'satisfied': result.get('satisfied', False),
+                'reasoning': result.get('reasoning', '')
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in process_selection_or_creation: {e}")
+            return {
+                'function_blocks': [],
+                'satisfied': False,
+                'reasoning': f'Error: {str(e)}'
+            }
+    
+    def _build_selection_prompt(
+        self,
+        user_request: str,
+        tree_state: Dict[str, Any],
+        current_node: Optional[AnalysisNode],
+        parent_chain: List[AnalysisNode],
+        generation_mode: GenerationMode,
+        max_children: int,
+        data_summary: Dict[str, Any]
+    ) -> str:
+        """Build prompt for function block selection/creation decision."""
+        parts = []
+        
+        parts.append("## Analysis Context")
+        parts.append(f"User Request: {user_request}")
+        parts.append("")
+        
+        parts.append("## Current Analysis State")
+        parts.append(f"Total nodes: {tree_state['total_nodes']}")
+        parts.append(f"Completed: {tree_state['completed_nodes']}")
+        parts.append(f"Failed: {tree_state['failed_nodes']}")
+        parts.append("")
+        
+        if parent_chain:
+            parts.append("## Previous Analysis Steps")
+            for i, node in enumerate(parent_chain):
+                parts.append(f"{i+1}. {node.function_block.name}: {node.function_block.description}")
+            parts.append("")
+        
+        if current_node:
+            parts.append("## Current Node")
+            parts.append(f"Name: {current_node.function_block.name}")
+            parts.append(f"Description: {current_node.function_block.description}")
+            parts.append("")
+        
+        if data_summary:
+            parts.append("## Current Data State")
+            parts.append(f"Shape: {data_summary.get('n_obs', '?')} observations × {data_summary.get('n_vars', '?')} variables")
+            if data_summary.get('obs_columns'):
+                parts.append(f"Observation columns: {', '.join(data_summary['obs_columns'])}")
+            if data_summary.get('obsm_keys'):
+                parts.append(f"Embeddings: {', '.join(data_summary['obsm_keys'])}")
+            parts.append("")
+        
+        parts.append("## Task")
+        parts.append(f"Recommend up to {max_children} function blocks for the next analysis steps.")
+        parts.append("For each function block, decide whether to create new or use existing.")
+        parts.append("")
+        
+        parts.append("Consider:")
+        parts.append("- What analysis steps are needed to fulfill the user request?")
+        parts.append("- What has already been done?")
+        parts.append("- What logical next steps would progress toward the goal?")
+        parts.append("- Are we satisfied that the request has been fulfilled?")
+        parts.append("- Should we create new custom blocks or use standard existing ones?")
+        
+        return "\n".join(parts)
+    
+    def _get_tree_state(self, tree: AnalysisTree) -> Dict[str, Any]:
+        """Get summary of tree state."""
+        completed = sum(1 for n in tree.nodes.values() if (n.state == "completed" if isinstance(n.state, str) else n.state.value == "completed"))
+        failed = sum(1 for n in tree.nodes.values() if (n.state == "failed" if isinstance(n.state, str) else n.state.value == "failed"))
+        pending = sum(1 for n in tree.nodes.values() if (n.state == "pending" if isinstance(n.state, str) else n.state.value == "pending"))
+        
+        return {
+            'total_nodes': len(tree.nodes),
+            'completed_nodes': completed,
+            'failed_nodes': failed,
+            'pending_nodes': pending
+        }
+    
+    # Add selection system prompt
+    SELECTION_SYSTEM_PROMPT = """You are an expert bioinformatics analyst specializing in single-cell RNA sequencing data analysis.
+
+Your task is to recommend function blocks that process single-cell data to fulfill user requests.
+
+CRITICAL PRINCIPLES:
+1. **ONE TASK PER FUNCTION BLOCK**: Each function block must perform exactly ONE specific task
+   - NEVER combine multiple steps like "filter AND normalize AND log transform" in one block
+   - Each distinct operation (filter, normalize, log1p, PCA, UMAP, etc.) must be its own block
+   - If the user lists steps as "1. First step... 2. Second step... 3. Third step...", create SEPARATE blocks
+2. **MODULAR WORKFLOW**: Complex requests must be broken into multiple sequential nodes
+3. **PROPER SEQUENCING**: Ensure correct order of operations (e.g., normalize before PCA, PCA before clustering)
+
+IMPORTANT - Request Satisfaction:
+- Set satisfied=true ONLY when ALL requested analyses are completed
+- Analyze the user request carefully to identify all requested tasks
+- Preprocessing steps alone do NOT satisfy analysis requests
+
+Common single-cell analysis workflows include:
+- Quality control and filtering (ONE node - ONLY filtering, no normalization)
+- Normalization (ONE node - ONLY normalize_total, no log transform)
+- Log transformation (ONE node - ONLY log1p)
+- Highly variable gene selection (ONE node)
+- Dimensionality reduction: PCA (ONE node), then UMAP/t-SNE (separate node)
+- Clustering: Leiden or Louvain (ONE node)
+- Differential expression analysis (ONE node per comparison)
+- Trajectory inference (ONE node per method)
+- Cell type annotation (ONE node)
+
+EXAMPLE: If user says "filter cells, normalize, and log transform", create THREE nodes:
+1. filter_cells (ONLY filtering)
+2. normalize_data (ONLY normalization)
+3. log_transform (ONLY log1p)
+
+For pseudotime analysis specifically:
+- Preprocessing: QC → Normalization → HVG → PCA → Neighbors (separate nodes)
+- Each pseudotime method is ONE node: DPT+PAGA, Slingshot, Palantir, Monocle3, scFates
+- Metrics computation is ONE node (after all methods complete)
+- Visualization is ONE node (after metrics)
+
+IMPORTANT: When the user requests multiple analyses (e.g., "run 5 pseudotime methods"), break it down:
+1. First ensure preprocessing is complete
+2. Create separate nodes for each pseudotime method
+3. Create a final node for metrics/visualization
+
+For each recommended function block, decide:
+- create_new=true: For custom analysis specific to the user request
+- create_new=false: For standard preprocessing steps with well-established methods"""

@@ -295,12 +295,12 @@ class TestOrchestratorParallelExecution(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.tree_manager = Mock(spec=AnalysisTreeManager)
-        self.function_selector = Mock()
+        self.function_creator = Mock()
         self.bug_fixer = Mock()
         
         self.orchestrator = OrchestratorAgent(
             tree_manager=self.tree_manager,
-            function_selector=self.function_selector,
+            function_creator=self.function_creator,
             bug_fixer=self.bug_fixer,
             max_parallel_jobs=2
         )
@@ -498,7 +498,7 @@ class TestOrchestratorParallelExecution(unittest.TestCase):
         self.tree_manager.add_child_nodes.return_value = []
         
         # Mock function selector to suggest new nodes
-        self.function_selector.process.return_value = {
+        self.function_creator.process_selection_or_creation.return_value = {
             "satisfied": False,
             "function_blocks": [
                 NewFunctionBlock(

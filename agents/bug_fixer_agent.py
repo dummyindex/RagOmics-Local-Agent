@@ -20,13 +20,16 @@ class BugFixerAgent(BaseAgent):
 Your task is to analyze errors and fix issues in function blocks based on the error messages and context provided.
 
 Focus on:
-1. Understanding the actual error from the traceback - ALWAYS look for the real error at the end of stdout
-2. Identifying missing dependencies or incorrect imports
-3. Fixing logical errors in the code
-4. Ensuring proper data handling
-5. Fixing syntax errors, especially in f-strings and string formatting
-6. Checking for missing data before using it (e.g., X_pca, ground truth columns)
-7. Understanding scanpy API requirements (e.g., scatter plot needs column names from .obs)
+1. PRIORITIZE actual Python errors (KeyError, AttributeError, ValueError) over warnings
+2. When you see a KeyError for a missing key, investigate WHY the key is missing:
+   - Is the computation creating a different key name?
+   - Is there a prerequisite step missing?
+   - Is the API being used incorrectly?
+3. Don't just add existence checks - understand the root cause
+4. Look at the code logic flow - are operations in the correct order?
+5. Check if computations are being done before their prerequisites
+6. Understanding library API conventions (what keys/attributes they create)
+7. Fixing the actual problem, not just masking the error
 
 Common issues to watch for:
 - F-string syntax errors with nested quotes/brackets - use intermediate variables instead
@@ -37,12 +40,25 @@ Common issues to watch for:
 - Use available columns from parent data structure context when provided
 - AttributeError with scanpy functions - verify the function exists in the API
 
-Important debugging context:
-- When you see AttributeError, it means the function/attribute doesn't exist in that module
-- Consider what the code is trying to achieve and which library would provide that functionality
-- Check the traceback carefully - the actual error is often at the end of stdout, not in stderr
-- Plotting functions often expect specific input types (column names vs arrays)
-- Always verify the existence of data (like embeddings) before using it
+Important debugging principles:
+- When you see KeyError: Understand WHY the key doesn't exist, don't just check for it
+- The error location shows WHERE it failed, but you need to find WHAT caused it
+- Look backwards from the error - what should have created that key?
+- Common pattern: operations done in wrong order (e.g., accessing result before computation)
+- Library APIs have specific conventions - understand what they expect and produce
+- Fix the root cause, not the symptom
+
+Common fixes:
+- Replace 'sklearn' with 'scikit-learn' in requirements
+- Use sc.tl.leiden instead of sc.tl.louvain (louvain is deprecated)
+- For KMeans, use sklearn.cluster.KMeans instead of sc.tl.kmeans (doesn't exist)
+- Scanpy plotting functions (sc.pl.*) expect column names, not arrays
+- Add get_param helper function when params have nested dictionaries
+- DPT requires preprocessing: neighbors and diffmap must be run first
+- IMPORTANT: sc.tl.dpt() creates 'dpt_pseudotime' NOT 'dpt' in adata.obs
+- Check if computation results exist before accessing (e.g., 'dpt_pseudotime' in adata.obs)
+- PAGA requires neighbors to be computed first
+- Many methods need PCA computed first (check 'X_pca' in adata.obsm)
 
 When analyzing errors:
 1. Read the full traceback to understand what function call failed
@@ -50,12 +66,25 @@ When analyzing errors:
 3. Research which library provides that functionality
 4. Consider alternative implementations from appropriate libraries
 
+Understanding method requirements:
+- Some methods require specific preprocessing steps
+- Some methods need parameters set BEFORE calling them
+- Check documentation or error messages for what's required
+- Order matters: prerequisites must be done first
+- Understand what keys/attributes each method creates
+
+Scanpy API key mappings (CRITICAL):
+- sc.tl.dpt() → creates 'dpt_pseudotime' in adata.obs (NOT 'dpt')
+- sc.tl.paga() → creates 'paga' in adata.uns
+- sc.tl.diffmap() → creates 'X_diffmap' in adata.obsm
+- sc.pp.neighbors() → creates 'neighbors' in adata.uns
+- sc.tl.umap() → creates 'X_umap' in adata.obsm
+
 You will respond in JSON format with your analysis and fixed code."""
     
     def __init__(self, llm_service: Optional[OpenAIService] = None, task_manager=None):
         super().__init__("bug_fixer", task_manager)
         self.llm_service = llm_service
-        self.common_fixes = self._load_common_fixes()
         self.max_error_lines = 1000  # Maximum lines of error output to include
         self.agent_logger = None  # Will be initialized per node
         
@@ -129,50 +158,9 @@ You will respond in JSON format with your analysis and fixed code."""
                 
                 self.update_task_status(TaskStatus.IN_PROGRESS)
         
-        # First try common fixes
-        fixed_code, fixed_requirements = self._try_common_fixes(
-            function_block, error_message, stdout, stderr
-        )
-        
-        # Log the common fix attempt if agent_logger available
-        if self.agent_logger:
-            self.agent_logger.log_bug_fix_attempt(
-                attempt_number=1,
-                error_info={
-                    'error_message': error_message,
-                    'stdout_lines': len(stdout.split('\n')) if stdout else 0,
-                    'stderr_lines': len(stderr.split('\n')) if stderr else 0
-                },
-                fix_strategy='common_fixes',
-                llm_input={'strategy': 'pattern_matching', 'patterns_checked': len(self.common_fixes)},
-                llm_output=None,
-                fixed_code=fixed_code,
-                success=bool(fixed_code),
-                error=None if fixed_code else 'No matching pattern found'
-            )
-        
-        if fixed_code:
-            result = {
-                'fixed_code': fixed_code,
-                'fixed_requirements': fixed_requirements,
-                'success': True,
-                'reasoning': 'Applied common fix pattern',
-                'task_id': task_id
-            }
-            
-            if task_id:
-                self.update_task_status(TaskStatus.COMPLETED, results=result)
-                self.task_manager.save_task_artifact(
-                    task_id,
-                    "fixed_code.py",
-                    fixed_code
-                )
-            
-            return result
-        
-        # If common fixes don't work and we have LLM service, use it
+        # Always use LLM for bug fixing - no hardcoded solutions
         if self.llm_service:
-            fixed_code = self._debug_with_llm(
+            fixed_code, fixed_requirements = self._debug_with_llm(
                 function_block=function_block,
                 error_message=error_message,
                 stdout=stdout,
@@ -185,7 +173,7 @@ You will respond in JSON format with your analysis and fixed code."""
             if fixed_code:
                 result = {
                     'fixed_code': fixed_code,
-                    'fixed_requirements': function_block.requirements,
+                    'fixed_requirements': fixed_requirements,
                     'success': True,
                     'reasoning': 'Fixed using LLM debugging',
                     'task_id': task_id
@@ -224,7 +212,7 @@ You will respond in JSON format with your analysis and fixed code."""
         previous_attempts: List[str],
         task_id: Optional[str],
         parent_data_structure: Optional[Dict[str, Any]] = None
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], Optional[str]]:
         """Use LLM to debug the function block."""
         language = "python" if function_block.type == FunctionBlockType.PYTHON else "r"
         
@@ -285,7 +273,7 @@ You will respond in JSON format with your analysis and fixed code."""
                         "requirements_changes": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of packages to add/remove from requirements (empty if no changes)"
+                            "description": "List of packages to add/remove from requirements. Format: '+package' to add, '-package' to remove (empty if no changes)"
                         }
                     },
                     "required": ["analysis", "fixed_code", "changes_made", "requirements_changes"]
@@ -315,13 +303,38 @@ You will respond in JSON format with your analysis and fixed code."""
                 max_tokens=3000
             )
             
-            # Extract code directly from JSON response
+            # Extract code and requirements from JSON response
             fixed_code = response.get('fixed_code') if response else None
+            
+            # Handle requirement changes
+            requirements = function_block.requirements or ""
+            if response and response.get('requirements_changes'):
+                req_changes = response['requirements_changes']
+                for change in req_changes:
+                    if change.startswith('+'):
+                        # Add requirement
+                        new_req = change[1:].strip()
+                        if new_req not in requirements:
+                            if requirements and not requirements.endswith('\n'):
+                                requirements += '\n'
+                            requirements += new_req + '\n'
+                    elif change.startswith('-'):
+                        # Remove requirement
+                        old_req = change[1:].strip()
+                        requirements = requirements.replace(old_req + '\n', '')
+                        requirements = requirements.replace(old_req, '')
+                    else:
+                        # Handle case where LLM doesn't use +/- prefix
+                        # Assume it's an addition if not already present
+                        if change not in requirements:
+                            if requirements and not requirements.endswith('\n'):
+                                requirements += '\n'
+                            requirements += change + '\n'
             
             # Log the bug fix attempt if agent_logger available
             if self.agent_logger:
                 self.agent_logger.log_bug_fix_attempt(
-                    attempt_number=len(previous_attempts) + 2,  # +2 because common fixes was attempt 1
+                    attempt_number=len(previous_attempts) + 1,
                     error_info={
                         'error_message': error_message,
                         'function_block_name': function_block.name,
@@ -331,7 +344,8 @@ You will respond in JSON format with your analysis and fixed code."""
                     llm_input=llm_input,
                     llm_output=response,
                     fixed_code=fixed_code,
-                    success=bool(fixed_code)
+                    success=bool(fixed_code),
+                    previous_attempts=previous_attempts
                 )
             
             # Also save code versions if we have a logger
@@ -339,10 +353,10 @@ You will respond in JSON format with your analysis and fixed code."""
                 self.agent_logger.save_function_block_versions(
                     original_code=function_block.code,
                     fixed_code=fixed_code,
-                    version=len(previous_attempts) + 2
+                    version=len(previous_attempts) + 1
                 )
             
-            return fixed_code
+            return fixed_code, requirements
             
         except Exception as e:
             self.logger.error(f"Error debugging with LLM: {e}")
@@ -350,17 +364,18 @@ You will respond in JSON format with your analysis and fixed code."""
             # Log the error if agent_logger available
             if self.agent_logger:
                 self.agent_logger.log_bug_fix_attempt(
-                    attempt_number=len(previous_attempts) + 2,
+                    attempt_number=len(previous_attempts) + 1,
                     error_info={'error_message': error_message},
                     fix_strategy='llm_debugging',
                     llm_input=llm_input if 'llm_input' in locals() else None,
                     llm_output=None,
                     fixed_code=None,
                     success=False,
-                    error=str(e)
+                    error=str(e),
+                    previous_attempts=previous_attempts
                 )
             
-            return None
+            return None, None
     
     def _build_debug_prompt(
         self,
@@ -385,17 +400,18 @@ You will respond in JSON format with your analysis and fixed code."""
         prompt_parts.append("```")
         prompt_parts.append("")
         
-        prompt_parts.append("## Error Information")
-        prompt_parts.append(f"Error Message: {error_message}")
-        prompt_parts.append("")
-        
-        # Include actual error traceback if found
+        # Include actual error traceback FIRST if found
         if actual_error_lines:
-            prompt_parts.append("## Actual Error Traceback (extracted from output)")
+            prompt_parts.append("## ACTUAL ERROR (This is the real problem to fix)")
             prompt_parts.append("```")
             prompt_parts.extend(actual_error_lines)
             prompt_parts.append("```")
             prompt_parts.append("")
+        
+        prompt_parts.append("## Container Exit Information")
+        prompt_parts.append(f"Exit Message: {error_message}")
+        prompt_parts.append("Note: Focus on the ACTUAL ERROR above, not warnings in stderr")
+        prompt_parts.append("")
         
         if stderr_lines:
             prompt_parts.append("## Standard Error Output (last {} lines)".format(len(stderr_lines)))
@@ -412,9 +428,48 @@ You will respond in JSON format with your analysis and fixed code."""
             prompt_parts.append("")
         
         if previous_attempts:
-            prompt_parts.append("## Previous Fix Attempts")
+            prompt_parts.append("## Previous Fix Attempts (Learn from these failures)")
+            prompt_parts.append("The following fixes were already tried and FAILED. Do NOT repeat these approaches:")
+            prompt_parts.append("")
+            
             for i, attempt in enumerate(previous_attempts, 1):
-                prompt_parts.append(f"{i}. {attempt}")
+                if isinstance(attempt, dict):
+                    # New structured format
+                    prompt_parts.append(f"### Attempt {i} ({attempt.get('timestamp', 'Unknown time')})")
+                    
+                    # Show the analysis
+                    analysis = attempt.get('llm_analysis', {})
+                    if analysis:
+                        prompt_parts.append(f"- **Error Type**: {analysis.get('error_type', 'Unknown')}")
+                        prompt_parts.append(f"- **Root Cause Identified**: {analysis.get('root_cause', 'Unknown')}")
+                        prompt_parts.append(f"- **Fix Strategy**: {analysis.get('fix_strategy', 'Unknown')}")
+                    
+                    # Show what changes were made
+                    changes = attempt.get('changes_made', [])
+                    if changes:
+                        prompt_parts.append("- **Changes Made**:")
+                        for change in changes:
+                            prompt_parts.append(f"  - {change}")
+                    
+                    # Show dependency changes if any
+                    req_changes = attempt.get('requirements_changes', [])
+                    if req_changes:
+                        prompt_parts.append("- **Dependency Changes**:")
+                        for req_change in req_changes:
+                            prompt_parts.append(f"  - {req_change}")
+                    
+                    # Show why it failed (if we know)
+                    if attempt.get('error'):
+                        prompt_parts.append(f"- **Why it failed**: {attempt['error']}")
+                    elif not attempt.get('success'):
+                        prompt_parts.append("- **Result**: This fix did not resolve the issue")
+                    
+                    prompt_parts.append("")
+                else:
+                    # Old string format (backward compatibility)
+                    prompt_parts.append(f"{i}. {attempt}")
+            
+            prompt_parts.append("**IMPORTANT**: Learn from these failures. Try a DIFFERENT approach.")
             prompt_parts.append("")
         
         if parent_data_structure:
@@ -428,389 +483,21 @@ You will respond in JSON format with your analysis and fixed code."""
             prompt_parts.append("")
         
         prompt_parts.append("## Task")
-        prompt_parts.append("Fix the code above to resolve the error. Return the complete fixed code.")
+        prompt_parts.append("Analyze the ACTUAL ERROR and fix the root cause. Return the complete fixed code.")
+        prompt_parts.append("")
+        prompt_parts.append("Analysis approach:")
+        prompt_parts.append("1. What is the actual error? (not warnings)")
+        prompt_parts.append("2. Why is this error occurring? (root cause)")
+        prompt_parts.append("3. What needs to be changed to fix it? (not just adding checks)")
         prompt_parts.append("")
         prompt_parts.append("Requirements:")
         prompt_parts.append("1. The function MUST be named 'run' with signature: def run(path_dict, params)")
         prompt_parts.append("2. Include all necessary imports inside the function")
-        prompt_parts.append("3. Handle the specific error shown above")
+        prompt_parts.append("3. Fix the ROOT CAUSE of the error, not just mask it")
         prompt_parts.append("4. NEVER add built-in Python modules (os, sys, pathlib, json, etc.) to requirements")
-        prompt_parts.append("4. Maintain the original functionality")
+        prompt_parts.append("5. Maintain the original functionality")
         
         return "\n".join(prompt_parts)
-    
-    def _load_common_fixes(self) -> List[Dict[str, Any]]:
-        """Load common error patterns and their fixes."""
-        return [
-            {
-                'pattern': r"AttributeError: kmeans",
-                'fix': self._fix_kmeans_error
-            },
-            {
-                'pattern': r"ModuleNotFoundError: No module named 'louvain'",
-                'fix': self._fix_louvain_error  
-            },
-            {
-                'pattern': r"ModuleNotFoundError: No module named '(\w+)'",
-                'fix': self._fix_missing_module
-            },
-            {
-                'pattern': r"ImportError: cannot import name '(\w+)'",
-                'fix': self._fix_import_error
-            },
-            {
-                'pattern': r"AttributeError: .* has no attribute '(\w+)'",
-                'fix': self._fix_attribute_error
-            },
-            {
-                'pattern': r"NameError: name '(\w+)' is not defined",
-                'fix': self._fix_name_error
-            },
-            {
-                'pattern': r"TypeError: .* missing \d+ required positional argument",
-                'fix': self._fix_argument_error
-            },
-            {
-                'pattern': r"TypeError: '>=' not supported between instances of '.*' and 'dict'",
-                'fix': self._fix_parameter_dict_error
-            },
-            {
-                'pattern': r"ValueError: .* must be 2D",
-                'fix': self._fix_dimension_error
-            },
-            {
-                'pattern': r"ValueError: `x`, `y`, and potential `color` inputs must all come from either `.obs` or `.var`",
-                'fix': self._fix_scanpy_scatter_error
-            },
-            {
-                'pattern': r"Could not find key .* in \.var_names or \.obs\.columns",
-                'fix': self._fix_scanpy_color_key_error
-            }
-        ]
-    
-    def _try_common_fixes(
-        self, 
-        function_block: NewFunctionBlock,
-        error_message: str,
-        stdout: str,
-        stderr: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Try to apply common fixes based on error patterns."""
-        
-        full_error = f"{error_message}\n{stderr}"
-        
-        for fix_info in self.common_fixes:
-            pattern = fix_info['pattern']
-            match = re.search(pattern, full_error)
-            if match:
-                fixed_code, fixed_requirements = fix_info['fix'](
-                    function_block, match, full_error
-                )
-                if fixed_code:
-                    return fixed_code, fixed_requirements
-        
-        return None, None
-    
-    def _fix_missing_module(
-        self, 
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix missing module errors."""
-        missing_module = match.group(1)
-        
-        # Common module mappings
-        module_mappings = {
-            'sklearn': 'scikit-learn>=1.0.0',
-            'cv2': 'opencv-python>=4.5.0',
-            'PIL': 'Pillow>=9.0.0',
-            'igraph': 'python-igraph>=0.10.0',
-            'leidenalg': 'leidenalg>=0.9.0',
-            'fa2': 'fa2>=0.3.5',
-            'louvain': 'python-louvain>=0.16',
-            'umap': 'umap-learn>=0.5.0',
-            'numba': 'numba>=0.56.0',
-            'scvelo': 'scvelo>=0.2.5',
-            'velocyto': 'velocyto>=0.17.0',
-            'cellrank': 'cellrank>=1.5.0',
-            'scFates': 'scFates>=0.9.0'
-        }
-        
-        # Check if we have a known mapping
-        package = module_mappings.get(missing_module, missing_module)
-        
-        # Add to requirements
-        requirements = function_block.requirements or ""
-        if package not in requirements:
-            if requirements and not requirements.endswith('\n'):
-                requirements += '\n'
-            requirements += f"{package}\n"
-            
-        return function_block.code, requirements
-    
-    def _fix_import_error(
-        self, 
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix import errors."""
-        # Try alternative import patterns
-        code = function_block.code
-        
-        # Common import fixes
-        import_fixes = {
-            'scatter': ('from scanpy.pl import scatter', 'import scanpy as sc\nsc.pl.scatter'),
-            'read_h5ad': ('from anndata import read_h5ad', 'import anndata as ad\nad.read_h5ad'),
-            'AnnData': ('from anndata import AnnData', 'import anndata as ad\nad.AnnData'),
-        }
-        
-        failed_import = match.group(1)
-        if failed_import in import_fixes:
-            old_pattern, new_pattern = import_fixes[failed_import]
-            if old_pattern in code:
-                code = code.replace(old_pattern, new_pattern)
-                return code, function_block.requirements
-        
-        return None, None
-    
-    def _fix_attribute_error(
-        self, 
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix attribute errors."""
-        code = function_block.code
-        
-        # Common attribute fixes for scanpy/anndata
-        attribute_fixes = {
-            # Plotting functions
-            'pl.velocity_embedding': 'import scvelo as scv\nscv.pl.velocity_embedding',
-            'pl.velocity': 'import scvelo as scv\nscv.pl.velocity',
-            'tl.velocity': 'import scvelo as scv\nscv.tl.velocity',
-            'pp.moments': 'import scvelo as scv\nscv.pp.moments',
-            
-            # Data access patterns
-            '.raw.X': '.raw.to_adata().X if hasattr(adata, "raw") else adata.X',
-            '.n_obs': '.shape[0]',
-            '.n_vars': '.shape[1]',
-        }
-        
-        for old, new in attribute_fixes.items():
-            if old in code:
-                code = code.replace(old, new)
-                return code, function_block.requirements
-                
-        return None, None
-    
-    def _fix_name_error(
-        self, 
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix name errors."""
-        undefined_name = match.group(1)
-        code = function_block.code
-        requirements = function_block.requirements or ""
-        
-        # Special case: get_param helper function
-        if undefined_name == 'get_param':
-            # Add the get_param function definition
-            get_param_code = """
-    # Helper function for parameters
-    def get_param(params, key, default):
-        val = params.get(key, default)
-        if isinstance(val, dict) and 'default_value' in val:
-            return val.get('default_value', default)
-        return val if val is not None else default
-"""
-            # Find where to insert it (after adata = sc.read_h5ad...)
-            lines = code.split('\n')
-            for i, line in enumerate(lines):
-                if 'sc.read_h5ad' in line:
-                    # Insert after reading data
-                    lines.insert(i + 1, get_param_code)
-                    return '\n'.join(lines), requirements
-            
-            # If not found, add after imports
-            for i, line in enumerate(lines):
-                if line.strip() and not line.strip().startswith('import') and not line.strip().startswith('from'):
-                    lines.insert(i, get_param_code)
-                    return '\n'.join(lines), requirements
-        
-        # Common undefined names and their fixes
-        name_fixes = {
-            'np': ('import numpy as np', 'numpy>=1.24.0'),
-            'pd': ('import pandas as pd', 'pandas>=2.0.0'),
-            'plt': ('import matplotlib.pyplot as plt', 'matplotlib>=3.6.0'),
-            'sc': ('import scanpy as sc', 'scanpy>=1.9.0'),
-            'ad': ('import anndata as ad', 'anndata>=0.8.0'),
-            'scv': ('import scvelo as scv', 'scvelo>=0.2.5'),
-            'scf': ('import scFates as scf', 'scFates>=1.0.0'),
-            'cr': ('import cellrank as cr', 'cellrank>=2.0.0'),
-            'squidpy': ('import squidpy', 'squidpy>=1.2.0'),
-        }
-        
-        if undefined_name in name_fixes:
-            import_stmt, package = name_fixes[undefined_name]
-            
-            # Add import if not present
-            if import_stmt not in code:
-                lines = code.split('\n')
-                # Find where to insert import
-                insert_idx = -1
-                for i, line in enumerate(lines):
-                    if line.strip().startswith('def run('):
-                        # Look for existing imports after function definition
-                        j = i + 1
-                        while j < len(lines) and (lines[j].strip().startswith('import') or 
-                                                  lines[j].strip().startswith('from') or
-                                                  lines[j].strip() == '' or
-                                                  lines[j].strip().startswith('"""')):
-                            j += 1
-                        insert_idx = j
-                        break
-                
-                if insert_idx > 0:
-                    indent = '    '
-                    lines.insert(insert_idx, f"{indent}{import_stmt}")
-                    code = '\n'.join(lines)
-                    
-                    # Add package to requirements if needed
-                    if package and package not in requirements:
-                        if requirements and not requirements.endswith('\n'):
-                            requirements += '\n'
-                        requirements += f"{package}\n"
-                    
-                    return code, requirements
-        
-        return None, None
-    
-    def _fix_argument_error(
-        self, 
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix function argument errors."""
-        code = function_block.code
-        
-        # Common argument fixes
-        if 'sc.pp.highly_variable_genes' in code and 'flavor=' not in code:
-            code = code.replace(
-                'sc.pp.highly_variable_genes(adata)',
-                'sc.pp.highly_variable_genes(adata, flavor="seurat")'
-            )
-            return code, function_block.requirements
-            
-        if 'sc.pp.neighbors' in code and 'n_neighbors=' not in code:
-            code = code.replace(
-                'sc.pp.neighbors(adata)',
-                'sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)'
-            )
-            return code, function_block.requirements
-            
-        return None, None
-    
-    def _fix_parameter_dict_error(
-        self, 
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix parameter extraction errors when params contain nested dicts."""
-        code = function_block.code
-        
-        # Look for incorrect parameter extraction patterns
-        lines = code.split('\n')
-        fixed_lines = []
-        changed = False
-        
-        for line in lines:
-            # Fix incorrect patterns for extracting parameters from nested dicts
-            if "params.get(" in line and ("['value_type']" in line or '["value_type"]' in line):
-                # This is wrong - trying to access wrong key
-                line = line.replace("['value_type']", "['default_value']")
-                line = line.replace('["value_type"]', '["default_value"]')
-                changed = True
-            
-            # Look for simple parameter extraction that needs fixing
-            elif re.search(r"(\w+)\s*=\s*params\.get\('(\w+)',\s*(\d+)\)", line):
-                # Pattern like: min_genes = params.get('min_genes', 200)
-                # Need to handle nested dict structure
-                param_match = re.search(r"(\w+)\s*=\s*params\.get\('(\w+)',\s*(\w+|\d+)\)", line)
-                if param_match:
-                    var_name = param_match.group(1)
-                    param_key = param_match.group(2)
-                    default_val = param_match.group(3)
-                    
-                    # Replace with proper extraction
-                    indent = len(line) - len(line.lstrip())
-                    new_line = f"{' ' * indent}{var_name} = params.get('{param_key}', {default_val})"
-                    new_line += f"\n{' ' * indent}if isinstance({var_name}, dict) and 'default_value' in {var_name}:"
-                    new_line += f"\n{' ' * indent}    {var_name} = {var_name}.get('default_value', {default_val})"
-                    fixed_lines.append(new_line)
-                    changed = True
-                    continue
-            
-            fixed_lines.append(line)
-        
-        if changed:
-            return '\n'.join(fixed_lines), function_block.requirements
-        
-        # Alternative fix: Add get_param helper function if not present
-        if 'get_param' not in code:
-            get_param_code = """    # Helper function for parameters
-    def get_param(params, key, default):
-        val = params.get(key, default)
-        if isinstance(val, dict) and 'default_value' in val:
-            return val.get('default_value', default)
-        return val if val is not None else default
-"""
-            # Find where to insert it
-            for i, line in enumerate(lines):
-                if 'def run(' in line:
-                    # Insert after function definition
-                    lines.insert(i + 1, get_param_code)
-                    
-                    # Now replace all params.get calls with get_param
-                    for j in range(len(lines)):
-                        lines[j] = re.sub(
-                            r"params\.get\('(\w+)',\s*([\w\d\.]+)\)",
-                            r"get_param(params, '\1', \2)",
-                            lines[j]
-                        )
-                    
-                    return '\n'.join(lines), function_block.requirements
-        
-        return None, None
-    
-    def _fix_dimension_error(
-        self, 
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix dimension-related errors."""
-        code = function_block.code
-        
-        # Add dimension checks
-        if 'adata.X' in code and 'scipy.sparse' not in code:
-            # Add sparse matrix handling
-            lines = code.split('\n')
-            for i, line in enumerate(lines):
-                if 'def run(' in line:
-                    lines.insert(i + 2, '    import scipy.sparse as sp')
-                    lines.insert(i + 3, '    # Ensure dense matrix for operations')
-                    lines.insert(i + 4, '    if sp.issparse(adata.X):')
-                    lines.insert(i + 5, '        adata.X = adata.X.toarray()')
-                    code = '\n'.join(lines)
-                    return code, function_block.requirements
-                    
-        return None, None
     
     def fix_error(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Alias for process() to maintain compatibility with MainAgent.
@@ -818,184 +505,3 @@ You will respond in JSON format with your analysis and fixed code."""
         This method is expected by MainAgent when calling bug_fixer_agent.fix_error()
         """
         return self.process(context)
-    
-    def _fix_scanpy_scatter_error(
-        self, 
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix scanpy scatter plot API errors.
-        
-        The sc.pl.scatter function expects column names from .obs or .var, 
-        not numpy arrays from .obsm.
-        """
-        code = function_block.code
-        lines = code.split('\n')
-        fixed_lines = []
-        changed = False
-        
-        for line in lines:
-            # Check for problematic scatter calls with numpy arrays
-            if 'sc.pl.scatter' in line and 'adata.obsm' in line:
-                # This is the problematic pattern
-                changed = True
-                
-                # Extract the color parameter if present
-                color_match = re.search(r"color='(\w+)'", line)
-                color_param = color_match.group(1) if color_match else 'kmeans'
-                
-                # Check if this is for kmeans or agglo
-                if 'kmeans' in line.lower() or color_param == 'kmeans':
-                    # Replace with proper visualization
-                    indent = len(line) - len(line.lstrip())
-                    fixed_lines.append(f"{' ' * indent}# Use PCA visualization for clustering results")
-                    fixed_lines.append(f"{' ' * indent}if 'X_pca' in adata.obsm:")
-                    fixed_lines.append(f"{' ' * indent}    sc.pl.pca(adata, color='kmeans', title='KMeans Clustering', show=False)")
-                    fixed_lines.append(f"{' ' * indent}elif 'X_umap' in adata.obsm:")
-                    fixed_lines.append(f"{' ' * indent}    sc.pl.umap(adata, color='kmeans', title='KMeans Clustering', show=False)")
-                    fixed_lines.append(f"{' ' * indent}else:")
-                    fixed_lines.append(f"{' ' * indent}    # Use matplotlib directly if no embeddings available for scanpy")
-                    fixed_lines.append(f"{' ' * indent}    import matplotlib.pyplot as plt")
-                    fixed_lines.append(f"{' ' * indent}    import numpy as np")
-                    fixed_lines.append(f"{' ' * indent}    if 'X_pca' in adata.obsm:")
-                    fixed_lines.append(f"{' ' * indent}        plt.scatter(adata.obsm['X_pca'][:, 0], adata.obsm['X_pca'][:, 1], c=adata.obs['kmeans'], cmap='tab10')")
-                    fixed_lines.append(f"{' ' * indent}        plt.title('KMeans Clustering')")
-                    fixed_lines.append(f"{' ' * indent}        plt.xlabel('PC1')")
-                    fixed_lines.append(f"{' ' * indent}        plt.ylabel('PC2')")
-                elif 'agglo' in line.lower() or color_param == 'agglo':
-                    # Similar fix for agglomerative clustering
-                    indent = len(line) - len(line.lstrip())
-                    fixed_lines.append(f"{' ' * indent}# Use PCA visualization for clustering results")
-                    fixed_lines.append(f"{' ' * indent}if 'X_pca' in adata.obsm:")
-                    fixed_lines.append(f"{' ' * indent}    sc.pl.pca(adata, color='agglo', title='Agglomerative Clustering', show=False)")
-                    fixed_lines.append(f"{' ' * indent}elif 'X_umap' in adata.obsm:")
-                    fixed_lines.append(f"{' ' * indent}    sc.pl.umap(adata, color='agglo', title='Agglomerative Clustering', show=False)")
-                    fixed_lines.append(f"{' ' * indent}else:")
-                    fixed_lines.append(f"{' ' * indent}    # Use matplotlib directly if no embeddings available for scanpy")
-                    fixed_lines.append(f"{' ' * indent}    import matplotlib.pyplot as plt")
-                    fixed_lines.append(f"{' ' * indent}    import numpy as np")
-                    fixed_lines.append(f"{' ' * indent}    if 'X_pca' in adata.obsm:")
-                    fixed_lines.append(f"{' ' * indent}        plt.scatter(adata.obsm['X_pca'][:, 0], adata.obsm['X_pca'][:, 1], c=adata.obs['agglo'], cmap='tab10')")
-                    fixed_lines.append(f"{' ' * indent}        plt.title('Agglomerative Clustering')")
-                    fixed_lines.append(f"{' ' * indent}        plt.xlabel('PC1')")
-                    fixed_lines.append(f"{' ' * indent}        plt.ylabel('PC2')")
-            # Also check for incorrect ground_truth column
-            elif "'ground_truth'" in line or '"ground_truth"' in line:
-                # Replace with Cell_type which is actually available
-                line = line.replace("'ground_truth'", "'Cell_type'")
-                line = line.replace('"ground_truth"', '"Cell_type"')
-                changed = True
-                fixed_lines.append(line)
-            else:
-                fixed_lines.append(line)
-        
-        if changed:
-            return '\n'.join(fixed_lines), function_block.requirements
-        
-        return None, None
-    
-    def _fix_scanpy_color_key_error(
-        self,
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix scanpy plotting where color parameter gets Series instead of column name.
-        
-        Common pattern: sc.pl.umap(adata, color=labels, ...) where labels is a Series
-        Should be: sc.pl.umap(adata, color='column_name', ...)
-        """
-        code = function_block.code
-        lines = code.split('\n')
-        fixed_lines = []
-        changed = False
-        
-        for line in lines:
-            # Check for scanpy plotting with variable as color
-            if re.search(r'sc\.pl\.(umap|tsne|pca|draw_graph|scatter)', line) and 'color=' in line:
-                # Extract the color variable
-                color_match = re.search(r'color=([^,\)]+)', line)
-                if color_match:
-                    color_var = color_match.group(1).strip()
-                    
-                    # Check if it's not already a string literal
-                    if not (color_var.startswith('"') or color_var.startswith("'")):
-                        # This is likely a variable being passed
-                        changed = True
-                        
-                        # Try to find what this variable represents
-                        if 'kmeans' in color_var.lower() or 'kmeans' in line.lower():
-                            fixed_line = line.replace(f'color={color_var}', "color='kmeans'")
-                        elif 'leiden' in color_var.lower() or 'leiden' in line.lower():
-                            fixed_line = line.replace(f'color={color_var}', "color='leiden'")
-                        elif 'agglo' in color_var.lower() or 'agglomerative' in line.lower():
-                            fixed_line = line.replace(f'color={color_var}', "color='agglomerative'")
-                        elif 'louvain' in color_var.lower() or 'louvain' in line.lower():
-                            fixed_line = line.replace(f'color={color_var}', "color='louvain'")
-                        elif 'Cell_type' in code:
-                            # Use Cell_type if available
-                            fixed_line = line.replace(f'color={color_var}', "color='Cell_type'")
-                        else:
-                            # Generic fix - assume the variable name indicates the column
-                            fixed_line = line.replace(f'color={color_var}', f"color='{color_var}'")
-                        
-                        fixed_lines.append(fixed_line)
-                        continue
-            
-            fixed_lines.append(line)
-        
-        if changed:
-            return '\n'.join(fixed_lines), function_block.requirements
-        
-        return None, None
-    
-    def _fix_kmeans_error(
-        self,
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix sc.tl.kmeans error - scanpy doesn't have kmeans, use sklearn."""
-        code = function_block.code
-        
-        # Replace sc.tl.kmeans with sklearn KMeans
-        fixed_code = code.replace(
-            "sc.tl.kmeans(adata, n_clusters=n_clusters, key_added='kmeans')",
-            """from sklearn.cluster import KMeans
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    adata.obs['kmeans'] = kmeans.fit_predict(adata.obsm['X_pca'])"""
-        )
-        
-        # Also handle other variations
-        fixed_code = re.sub(
-            r"sc\.tl\.kmeans\(([^)]+)\)",
-            r"# KMeans replaced with sklearn implementation above",
-            fixed_code
-        )
-        
-        if fixed_code != code:
-            return fixed_code, function_block.requirements
-        return None, None
-    
-    def _fix_louvain_error(
-        self,
-        function_block: NewFunctionBlock,
-        match: re.Match,
-        error: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Fix louvain import error - use leiden instead which is included in scanpy."""
-        code = function_block.code
-        
-        # Replace louvain with leiden
-        fixed_code = code.replace("sc.tl.louvain", "sc.tl.leiden")
-        fixed_code = fixed_code.replace("'louvain'", "'leiden'")
-        fixed_code = fixed_code.replace('"louvain"', '"leiden"')
-        
-        # Remove explicit louvain imports
-        fixed_code = re.sub(r"^\s*import louvain.*$", "", fixed_code, flags=re.MULTILINE)
-        fixed_code = re.sub(r"^\s*from louvain import.*$", "", fixed_code, flags=re.MULTILINE)
-        
-        if fixed_code != code:
-            return fixed_code, function_block.requirements
-        return None, None

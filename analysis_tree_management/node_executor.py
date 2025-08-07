@@ -178,11 +178,17 @@ class NodeExecutor:
                 error_info = {
                     "node_id": node.id,
                     "error": result.error,
+                    "stdout": result.stdout,
                     "stderr": result.stderr,
                     "exit_code": result.exit_code
                 }
                 with open(job_logs_dir / "error.json", 'w') as f:
                     json.dump(error_info, f, indent=2)
+                
+                # Save stdout even on failure - this is critical for debugging
+                if result.stdout:
+                    with open(job_logs_dir / "stdout.txt", 'w') as f:
+                        f.write(result.stdout)
                 
                 if result.stderr:
                     with open(job_logs_dir / "stderr.txt", 'w') as f:
