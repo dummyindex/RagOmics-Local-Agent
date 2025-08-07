@@ -1054,7 +1054,7 @@ def run(path_dict, params):
         if parent_type == FunctionBlockType.PYTHON and child_block.type == FunctionBlockType.R:
             # Python to R: use convert_anndata_to_sc_matrix
             # Read the conversion code from the builtin file
-            conversion_code_path = Path(__file__).parent.parent / "src/ragomics_agent_local/function_blocks/builtin/convert_anndata_to_sc_matrix.py"
+            conversion_code_path = Path(__file__).parent.parent / "function_blocks/builtin/convert_anndata_to_sc_matrix/code.py"
             if conversion_code_path.exists():
                 with open(conversion_code_path, 'r') as f:
                     code = f.read()
@@ -1177,7 +1177,7 @@ def run(path_dict, params):
         elif parent_type == FunctionBlockType.R and child_block.type == FunctionBlockType.PYTHON:
             # R to Python: use convert_seurat_to_sc_matrix
             # Read the conversion code from the builtin file
-            conversion_code_path = Path(__file__).parent.parent / "src/ragomics_agent_local/function_blocks/builtin/convert_seurat_to_sc_matrix.r"
+            conversion_code_path = Path(__file__).parent.parent / "function_blocks/builtin/convert_seurat_to_sc_matrix/code.r"
             if conversion_code_path.exists():
                 with open(conversion_code_path, 'r') as f:
                     code = f.read()

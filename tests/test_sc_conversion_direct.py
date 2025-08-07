@@ -101,7 +101,7 @@ def test_r_conversion():
         r_script = temp_path / "run_conversion.R"
         r_code = f'''
 # Load the conversion function
-source("{Path(__file__).parent.parent / "src/ragomics_agent_local/function_blocks/builtin/convert_seurat_to_sc_matrix.r"}")
+source("{Path(__file__).parent.parent / "function_blocks/builtin/convert_seurat_to_sc_matrix/code.r"}")
 
 # Create path_dict
 path_dict <- list(
