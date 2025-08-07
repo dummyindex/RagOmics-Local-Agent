@@ -14,7 +14,7 @@ from ragomics_agent_local.models import (
     FunctionBlockType, StaticConfig, Arg
 )
 from ragomics_agent_local.agents import (
-    MainAgent, FunctionSelectorAgent, BugFixerAgent, OrchestratorAgent
+    MainAgent, FunctionCreatorAgent, BugFixerAgent, OrchestratorAgent
 )
 from ragomics_agent_local.analysis_tree_management import AnalysisTreeManager
 from ragomics_agent_local.job_executors import ExecutorManager
@@ -24,8 +24,8 @@ from ragomics_agent_local.utils import setup_logger
 logger = setup_logger("test_main_agent_scvelo")
 
 
-class MockFunctionSelector(FunctionSelectorAgent):
-    """Mock function selector that returns predefined function blocks for scvelo pipeline."""
+class MockFunctionCreator(FunctionCreatorAgent):
+    """Mock function creator that returns predefined function blocks for scvelo pipeline."""
     
     def __init__(self):
         super().__init__(llm_service=None)
@@ -73,7 +73,7 @@ class MockFunctionSelector(FunctionSelectorAgent):
             }
         ]
     
-    def _mock_select_function_blocks(self, context):
+    def process_selection_or_creation(self, context):
         """Return the next step in the pipeline."""
         # Determine which step we're on based on tree state
         tree = context.get('tree')
@@ -610,9 +610,9 @@ def test_main_agent_scvelo_pipeline():
     
     # Create components
     tree_manager = AnalysisTreeManager()
-    mock_selector = MockFunctionSelector()
+    mock_creator = MockFunctionCreator()
     bug_fixer = BugFixerAgent()  # No LLM service
-    orchestrator = OrchestratorAgent(tree_manager, mock_selector, bug_fixer)
+    orchestrator = OrchestratorAgent(tree_manager, None, bug_fixer)  # No separate selector
     executor_manager = ExecutorManager()
     node_executor = NodeExecutor(executor_manager)
     
@@ -626,7 +626,7 @@ def test_main_agent_scvelo_pipeline():
             self.tree_manager = tree_manager
             self.node_executor = node_executor
             self.orchestrator = orchestrator
-            self.function_selector = mock_selector
+            self.function_creator = mock_creator
             self.bug_fixer = bug_fixer
             
         def run_refactored_analysis(

@@ -118,6 +118,12 @@ class BaseExecutor(ABC):
                 result.exit_code = exit_code
             else:
                 logger.error(f"Function block {function_block.name} failed with exit code {exit_code}")
+                # Log stdout/stderr for debugging
+                if stdout:
+                    logger.debug(f"STDOUT:\n{stdout}")
+                if stderr:
+                    logger.debug(f"STDERR:\n{stderr}")
+                    
                 result = ExecutionResult(
                     success=False,
                     error=f"Container exited with code {exit_code}\n{stderr}",
@@ -130,8 +136,8 @@ class BaseExecutor(ABC):
                     exit_code=exit_code
                 )
             
-            # Save job history
-            self.save_job_history(output_dir, result, function_block)
+            # Job history is now managed by tree_manager through job directories
+            # The deprecated save_job_history method is no longer called
             
             return result
                 
@@ -204,9 +210,15 @@ class BaseExecutor(ABC):
             json.dump(parameters, f, indent=2)
     
     def save_job_history(self, output_dir: Path, result: ExecutionResult, function_block: FunctionBlock) -> None:
-        """Save job execution history with stdout, stderr, and metrics."""
+        """Save job execution history with stdout, stderr, and metrics.
         
-        # Create past_jobs directory
+        NOTE: This method is deprecated. Job history should be managed by the
+        tree_manager creating separate job directories under nodes/node_id/jobs/.
+        This method is kept for backwards compatibility but should not be used
+        for new implementations.
+        """
+        
+        # Create past_jobs directory (for backwards compatibility only)
         past_jobs_dir = output_dir / "past_jobs"
         past_jobs_dir.mkdir(parents=True, exist_ok=True)
         
@@ -277,10 +289,5 @@ class BaseExecutor(ABC):
             json.dump(job_info, f, indent=2)
         logger.debug(f"Saved job info to {job_info_path}")
         
-        # Create symlink to current job if successful
-        if result.success and result.output_data_path:
-            current_link = output_dir / "current_job"
-            if current_link.exists() or current_link.is_symlink():
-                current_link.unlink()
-            current_link.symlink_to(job_dir.relative_to(output_dir))
-            logger.debug(f"Created current_job symlink to {job_dir_name}")
+        # NOTE: No current_job symlink - this is handled by tree_manager's job structure
+        # The 'latest' symlink in the jobs directory serves this purpose

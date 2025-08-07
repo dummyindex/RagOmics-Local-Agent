@@ -100,7 +100,8 @@ class AgentOutputLogger:
         llm_output: Optional[Dict[str, Any]] = None,
         fixed_code: Optional[str] = None,
         success: bool = False,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        previous_attempts: Optional[List[Dict[str, Any]]] = None
     ) -> Path:
         """Log a bug fix attempt.
         
@@ -132,7 +133,8 @@ class AgentOutputLogger:
             "llm_output": llm_output,
             "fixed_code": fixed_code,
             "success": success,
-            "error": error
+            "error": error,
+            "previous_attempts_summary": self._summarize_attempts(previous_attempts) if previous_attempts else []
         }
         
         # Save to dedicated bug fix directory
@@ -144,6 +146,26 @@ class AgentOutputLogger:
             json.dump(log_data, f, indent=2, default=str)
         
         return log_file
+    
+    def _summarize_attempts(self, attempts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Create a summary of previous attempts for logging.
+        
+        Args:
+            attempts: List of previous attempt data
+            
+        Returns:
+            Summarized list for logging
+        """
+        summaries = []
+        for attempt in attempts:
+            summary = {
+                "attempt": attempt.get("attempt_number", 0),
+                "error_type": attempt.get("llm_analysis", {}).get("error_type", "Unknown"),
+                "root_cause": attempt.get("llm_analysis", {}).get("root_cause", "Unknown"),
+                "strategy": attempt.get("llm_analysis", {}).get("fix_strategy", "Unknown")
+            }
+            summaries.append(summary)
+        return summaries
     
     def log_selection_process(
         self,

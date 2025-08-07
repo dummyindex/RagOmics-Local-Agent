@@ -1,9 +1,8 @@
 # Minimal R execution environment for ragomics-agent-local
 FROM --platform=linux/arm64 r-base:4.4.3
 
-# Install basic system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
     libcurl4-openssl-dev \
     libssl-dev \
     libxml2-dev \
@@ -12,15 +11,32 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages for anndata bridge
+# Install Python packages
 RUN pip3 install --break-system-packages anndata h5py numpy pandas
 
-# Install basic R packages
-RUN R -e "install.packages(c('devtools', 'BiocManager', 'tidyverse', 'ggplot2', 'Seurat'), repos='https://cloud.r-project.org')"
+# Install R packages - only the essentials
+RUN R -e "install.packages(c('Matrix', 'jsonlite', 'Rcpp'), repos='https://cloud.r-project.org')"
 
-# Install anndata interface
-RUN R -e "install.packages('reticulate', repos='https://cloud.r-project.org')"
-RUN R -e "reticulate::use_python('/usr/bin/python3', required=TRUE)"
+# Install BiocManager
+RUN R -e "install.packages('BiocManager', repos='https://cloud.r-project.org')"
+
+# Install Seurat (needed for test data)
+RUN R -e "install.packages('Seurat', repos='https://cloud.r-project.org')"
+
+# Install additional dependencies for Monocle3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgsl-dev \
+    libgeos-dev \
+    libproj-dev \
+    libgdal-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Monocle3 dependencies
+RUN R -e "BiocManager::install(c('SingleCellExperiment', 'SummarizedExperiment', 'DelayedArray', 'DelayedMatrixStats', 'HDF5Array', 'limma', 'S4Vectors', 'BiocGenerics'), ask=FALSE, update=FALSE)"
+
+# Install Monocle3 from GitHub
+RUN R -e "install.packages(c('lme4', 'flexmix', 'plyr', 'reshape2', 'ggplot2'), repos='https://cloud.r-project.org')"
+RUN R -e "remotes::install_github('cole-trapnell-lab/monocle3', quiet=TRUE)"
 
 # Create directories
 RUN mkdir -p /workspace/input /workspace/output/figures /workspace/tmp

@@ -7,7 +7,7 @@ import uuid
 import json
 
 from .base_agent import BaseAgent
-from .function_selector_agent import FunctionSelectorAgent
+from .function_creator_agent import FunctionCreatorAgent
 from .bug_fixer_agent import BugFixerAgent
 from ..models import (
     AnalysisTree, AnalysisNode, NodeState, GenerationMode,
@@ -25,13 +25,13 @@ class OrchestratorAgent(BaseAgent):
         self, 
         llm_service=None,
         tree_manager: Optional[AnalysisTreeManager] = None,
-        function_selector: Optional[FunctionSelectorAgent] = None,
+        function_creator: Optional[FunctionCreatorAgent] = None,
         bug_fixer: Optional[BugFixerAgent] = None,
         max_parallel_jobs: int = 3
     ):
         super().__init__("orchestrator")
         self.tree_manager = tree_manager
-        self.function_selector = function_selector
+        self.function_creator = function_creator
         self.bug_fixer = bug_fixer
         self.data_handler = DataHandler()
         self.max_parallel_jobs = max_parallel_jobs
@@ -317,10 +317,14 @@ class OrchestratorAgent(BaseAgent):
             }
         ]
         
-        # Check if we should be satisfied
-        if "cluster" in user_request.lower() and total_nodes >= 5:
-            return {"satisfied": True, "next_actions": []}
+        # Simple logic for testing - should be replaced with proper LLM-based planning
+        # Do NOT hardcode satisfaction logic based on specific analysis types
         
+        # NEVER hardcode a maximum number of nodes for satisfaction
+        # The tree should expand based on user parameters (max_nodes, max_children, etc.)
+        
+        # For now, continue expanding until we hit the workflow steps limit
+        # This is temporary logic - real implementation should use LLM
         if total_nodes >= len(workflow_steps):
             return {"satisfied": True, "next_actions": []}
         
@@ -410,8 +414,8 @@ class OrchestratorAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning(f"Failed to load data: {e}")
         
-        # Select root function block
-        result = self.function_selector.process({
+        # Select or create root function block
+        result = self.function_creator.process_selection_or_creation({
             'user_request': user_request,
             'tree': tree,
             'current_node': None,
@@ -441,8 +445,8 @@ class OrchestratorAgent(BaseAgent):
         # Get latest data path
         data_path = self.tree_manager.get_latest_data_path(node.id)
         
-        # Select child function blocks
-        result = self.function_selector.process({
+        # Select or create child function blocks
+        result = self.function_creator.process_selection_or_creation({
             'user_request': user_request,
             'tree': tree,
             'current_node': node,

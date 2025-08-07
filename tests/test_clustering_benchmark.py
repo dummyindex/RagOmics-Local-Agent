@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from test_utils import get_test_output_dir
+# from test_utils import get_test_output_dir
 
 from ragomics_agent_local.agents.main_agent import MainAgent
 from ragomics_agent_local.analysis_tree_management import AnalysisTreeManager
@@ -17,8 +17,7 @@ from ragomics_agent_local.tests.test_main_agent_mocked import (
     create_clustering_pipeline,
     create_predefined_function_blocks,
     MockOrchestratorAgent,
-    MockFunctionCreator,
-    MockFunctionSelector
+    MockFunctionCreator
 )
 from unittest.mock import patch
 import scanpy as sc
@@ -58,7 +57,7 @@ def run_clustering_benchmark_mock():
     
     # Create output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = get_test_output_dir() / f"clustering_mock_{timestamp}"
+    output_dir = Path("test_outputs") / f"clustering_mock_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"\n📁 Output Directory: {output_dir}")
@@ -74,13 +73,11 @@ def run_clustering_benchmark_mock():
     
     mock_orchestrator = MockOrchestratorAgent(pipeline)
     mock_creator = MockFunctionCreator(predefined_blocks)
-    mock_selector = MockFunctionSelector()
     
     # Create main agent with mocks
     main_agent = MainAgent()
     main_agent.orchestrator = mock_orchestrator
     main_agent.function_creator = mock_creator
-    main_agent.function_selector = mock_selector
     
     # Mock node executor to avoid actual execution
     with patch.object(main_agent.node_executor, 'execute_node') as mock_execute:
@@ -222,7 +219,7 @@ def run_clustering_benchmark_openai():
     
     # Create output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = get_test_output_dir() / f"clustering_openai_{timestamp}"
+    output_dir = Path("test_outputs") / f"clustering_openai_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"📁 Output Directory: {output_dir}")

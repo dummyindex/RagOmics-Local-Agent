@@ -13,13 +13,13 @@ logger = get_logger(__name__)
 class OpenAIService:
     """Simple service for OpenAI API interactions."""
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or config.openai_api_key
         if not self.api_key:
             raise ValueError("OpenAI API key not provided")
             
         self.client = OpenAI(api_key=self.api_key)
-        self.model = config.openai_model
+        self.model = model or config.openai_model
         
     def chat_completion(
         self,
